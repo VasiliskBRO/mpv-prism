@@ -54,7 +54,7 @@ end
 
 -- the "Мои иконки" part of an icon list: own icons from ~~/icons (icons.lua), then a caption for the built-in ones;
 -- pick(name) is the action of an icon
-local function own_icon_items(list, current, pick)
+local function own_icon_items(list, current, pick, no_builtin)
     local icons = require "icons"
     list[#list + 1] = {header = true, title = "МОИ ИКОНКИ"}
     for _, own in ipairs(icons.list()) do
@@ -67,9 +67,9 @@ local function own_icon_items(list, current, pick)
             mp.commandv("run", "explorer", icons.dir())
             return "stay"
         end}
-    list[#list + 1] = {title = "Обновить список", icon = "refresh", separator = true,
+    list[#list + 1] = {title = "Обновить список", icon = "refresh", separator = not no_builtin,
                        action = function () icons.forget() return "keep" end}
-    list[#list + 1] = {header = true, title = "ВСТРОЕННЫЕ"}
+    if not no_builtin then list[#list + 1] = {header = true, title = "ВСТРОЕННЫЕ"} end
 end
 
 -- ready-made buttons: title, icon, left click, tooltip
@@ -106,6 +106,7 @@ local BUILTIN = {
 local function item_name(item)
     if item.custom and item.custom.kind == "zone" then return "Зона «" .. (item.custom.name or item.id) .. "»" end
     if item.custom and item.custom.kind == "plate" then return "Плашка" end
+    if item.custom and item.custom.kind == "mascot" then return "Маскот" end
     if item.custom then
         if item.custom.kind == "text" then return "Надпись «" .. (item.custom.text or "") .. "»" end
         return item.tooltip or ("Кнопка «" .. icon_name(item.custom.icon) .. "»")
@@ -1098,7 +1099,40 @@ local function properties(index)
         local items = {}
         local function add(entry) items[#items + 1] = entry end
 
-        if item.id == "volume" then
+        if item.custom and item.custom.kind == "mascot" then
+            -- the mascot (mascot.lua): a picture per state, the built-in "Призмочка" by default
+            local states = {{"sit", "Сидит на панели"}, {"peek", "На паузе — выглядывает"}, {"sleep", "Спит — ничего не играет"},
+                            {"wave", "В конце видео — машет"}}
+            for _, st in ipairs(states) do
+                local image = item.custom.images and item.custom.images[st[1]]
+                add({title = st[2], icon = image or "pets", hint = image and icon_name(image) or "Призмочка",
+                     submenu = function ()
+                         local list = {{title = "Призмочка (встроенная)", icon = "change_history",
+                             active = not (ed.skin.items[index].custom.images or {})[st[1]], action = function ()
+                                 change(index, function (it)
+                                     if it.custom.images then it.custom.images[st[1]] = nil end
+                                     if it.custom.images and not next(it.custom.images) then it.custom.images = nil end
+                                 end)
+                                 return "keep"
+                             end}}
+                         own_icon_items(list, (ed.skin.items[index].custom.images or {})[st[1]], function (name)
+                             change(index, function (it)
+                                 it.custom.images = it.custom.images or {}
+                                 it.custom.images[st[1]] = name
+                             end)
+                             return "keep"
+                         end, true)
+                         return {title = st[2], items = list}
+                     end})
+            end
+            add({title = "Во время просмотра", icon = "visibility", hint = item.custom.quiet and "прячется" or "сидит на панели",
+                 action = function ()
+                     change(index, function (it) it.custom.quiet = not it.custom.quiet or nil end)
+                     return "keep"
+                 end})
+            add({title = "Своя картинка: кинь PNG или SVG в «Мои иконки»", icon = "info", muted = true,
+                 action = function () return "keep" end})
+        elseif item.id == "volume" then
             -- the volume widget: its place and size here, its scale belongs to the whole skin
             volume_scale_items(add, function () open_properties(index) end)
             local hint = ed.skin.volume_dir == "horizontal" and "Ширина — длина регулятора, высота — его толщина"
@@ -1371,6 +1405,14 @@ create_menu = function (at)
                 M.render()
             end)
         end}
+        local has_mascot = false
+        for _, it in ipairs(ed.skin.items) do has_mascot = has_mascot or (it.custom and it.custom.kind == "mascot") end
+        if not has_mascot then
+            items[#items + 1] = {title = "Маскот «Призмочка»", icon = "pets", action = function ()
+                add_item({id = new_custom_id(), custom = {kind = "mascot"}, w = 60, h = 60}, at)
+                toast("Маскот живёт на панели: на паузе выглядывает, без видео спит, в конце машет. Картинки — в свойствах", 7)
+            end}
+        end
         items[#items + 1] = {title = "Плашка (подложка под кнопки)", icon = "rectangle", action = function ()
             add_item({id = new_custom_id(), custom = {kind = "plate"}, w = 240, h = 56}, at)
             toast("Плашка создана: растяни её под группу кнопок; цвет и скругление — в свойствах", 6)

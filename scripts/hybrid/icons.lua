@@ -405,7 +405,7 @@ end
 -- PNG pictures through overlay-add ---------------------------------------------------------------------
 
 -- 42 belongs to thumbfast (its overlay_id), so the pictures keep out of it
-local RANGES = {menu = {1, 20}, ring = {21, 30}, bar = {44, 63}}
+local RANGES = {menu = {1, 20}, ring = {21, 30}, mascot = {31, 41}, bar = {44, 63}}
 local frames = {}   -- owner -> pictures asked for during the current render
 local shown = {}    -- overlay id -> what it shows now
 local ready = {}    -- name@px -> raw file path; false while converting or when it failed

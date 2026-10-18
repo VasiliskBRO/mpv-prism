@@ -2721,6 +2721,40 @@ function volume_skin.get()
     }
 end
 
+-- the mascot of the skin (an item {kind = "mascot"}, mascot.lua): which state it is in, where it lives.
+-- Called when the bar is rebuilt or shown/hidden, on pause, at the end, when nothing plays, around menus
+osc_param.update_mascot = function ()
+    local mascot = require "mascot"
+    local item
+    if user_opts.layout == "skin" and not state.is_image then
+        for _, it in ipairs(get_skin().items) do
+            if it.custom and it.custom.kind == "mascot" then item = it break end
+        end
+    end
+    local W, H = osc_param.playresx, osc_param.playresy
+    if not item or not W or W <= 0 or (state.menu_open and not state.skin_editing) then return mascot.update(nil) end
+    local w = item.w or 64
+    local x1 = item.anchor == "left" and item.x or (item.anchor == "center" and W / 2 + item.x)
+        or (item.anchor == "stretch" and item.x) or W + item.x
+    local y2 = H - item.bottom
+    local st
+    if state.skin_editing then
+        st = "sit"
+    elseif mp.get_property_native("idle-active") then
+        st = "sleep"
+    elseif mp.get_property_native("eof-reached") then
+        st = "wave"
+    elseif mp.get_property_native("pause") then
+        st = "peek"
+    elseif state.osc_visible and not item.custom.quiet then
+        st = "sit"
+    end
+    local sx, sy = get_virt_scale_factor()
+    mascot.update({rect = {x1 = x1, y1 = y2 - item.h, x2 = x1 + w, y2 = y2}, res_x = W, res_y = H, state = st,
+                   accent = user_opts.seekbarfg_color, images = item.custom.images,
+                   sx = sx > 0 and sx or 1, sy = sy > 0 and sy or 1})
+end
+
 -- button styles by element; everything not listed is a side button (control_3)
 local SKIN_STYLES = {
     play_pause = "control_1",
@@ -3148,6 +3182,8 @@ layouts["skin"] = function ()
                 lo.style = id == "time_codes" and osc_styles.time or osc_styles.cache
             elseif id == "speed_ruler" then
                 lo = place(id, 5, e)
+            elseif e.item.custom and e.item.custom.kind == "mascot" then
+                lo = place(id, 5, e)
             elseif e.item.custom and e.item.custom.kind == "plate" then
                 lo = place(id, 5, e)
                 lo.layer = 12
@@ -3293,6 +3329,7 @@ end
 
 local function osc_visible(visible)
     set_bar_visible("osc_visible", visible)
+    osc_param.update_mascot()
 end
 
 local function wc_visible(visible)
@@ -4198,7 +4235,11 @@ local function osc_init()
     if user_opts.layout == "skin" then
         for _, item in ipairs(get_skin().items) do
             local custom = item.custom
-            if custom and custom.kind == "plate" and item.id:match("^custom_") then
+            if custom and custom.kind == "mascot" and item.id:match("^custom_") then
+                -- the mascot draws itself (mascot.lua); the element only keeps its box for the editor
+                ne = new_element(item.id, "custom")
+                ne.draw = function () end
+            elseif custom and custom.kind == "plate" and item.id:match("^custom_") then
                 -- a rounded plate under other items (no clicks): color, transparency, corner radius
                 local radius, color = item.radius, item.color or "#121218"
                 ne = new_element(item.id, "custom")
@@ -4265,6 +4306,7 @@ local function osc_init()
 
     prepare_elements()
     update_margins()
+    osc_param.update_mascot()
 end
 
 local function show_wc()
@@ -5486,6 +5528,7 @@ local function osc_suspend(suspend)
             show_wc()
         end
     end
+    osc_param.update_mascot()
     request_tick()
 end
 
@@ -5984,6 +6027,16 @@ apply_skin_look = function ()
     set_osc_styles()
     menu.setup({accent = user_opts.seekbarfg_color, font = user_opts.font})
 end
+
+-- the mascot reacts to pause, the end of a file and the idle screen (no loop: its variables would count
+-- against the 200 locals of this chunk)
+mp.observe_property("pause", "native", function () osc_param.update_mascot() end)
+mp.observe_property("eof-reached", "native", function () osc_param.update_mascot() end)
+mp.observe_property("idle-active", "native", function (_, idle)
+    -- nothing plays: a frame preview left from the last file would hang in the middle of the screen
+    if idle then mp.commandv("script-message-to", "thumbfast", "clear") end
+    osc_param.update_mascot()
+end)
 
 -- a new chameleon color: the look again, the bar rebuilt with it; the start of a change is the theme's accent
 require("chameleon").setup({

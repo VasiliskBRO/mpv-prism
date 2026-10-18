@@ -51,6 +51,8 @@
 --             hover zones (id "zone_*"): {kind = "zone", name = "..."}
 --             plates (id "custom_N"): {kind = "plate"} - a rounded plate under other items;
 --             color, alpha and radius (corner radius, nil = round ends) set its look
+--             the mascot (id "custom_*"): {kind = "mascot", images = {sit, peek, sleep, wave = "file:..."},
+--             quiet = true} - lives on the bar (mascot.lua); without images it is the built-in "Призмочка"
 --   bg, bg_color, bg_alpha  bg = "circle": a round plate behind a button; font - font of a text item
 --   based_on  (skin level) the skin this one was copied from, for "Как по умолчанию";
 --             shipped originals live in skins/defaults/<name>.json
@@ -138,6 +140,15 @@ local function normalize(skin)
                     icon = type(item.custom.icon) == "string" and item.custom.icon or nil,
                     text = type(item.custom.text) == "string" and item.custom.text or nil,
                     name = type(item.custom.name) == "string" and item.custom.name or nil}
+            elseif kind == "mascot" then
+                -- the mascot (mascot.lua): own pictures per state, quiet = not shown while playing
+                local images = {}
+                for _, st in ipairs({"sit", "peek", "sleep", "wave"}) do
+                    local v = type(item.custom.images) == "table" and item.custom.images[st]
+                    if type(v) == "string" and v ~= "" then images[st] = v end
+                end
+                item.custom = {kind = "mascot", images = next(images) and images or nil,
+                               quiet = item.custom.quiet == true or nil}
             else
                 item.custom = nil
             end
