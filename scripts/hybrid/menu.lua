@@ -5,7 +5,7 @@
 -- A menu level is built by a function returning:
 --   { title = "...", items = { item, ... }, selected = index (optional) }
 -- Item fields:
---   title, hint, icon (Material Icons name), active (current value), muted, bold,
+--   title, hint, icon (Material Icons name), active (current value), muted, bold, color ("#RRGGBB"),
 --   separator (line below), submenu (builder function), action (function(item);
 --   return "keep" to stay open and refresh, "stay" to stay without refresh)
 --   header = true    a quiet section caption (not selectable, gone while searching)
@@ -14,7 +14,12 @@
 --            and tip (shown in the title row while the chip is selected);
 --            compact = true: one normal-height line (icon and text side by side),
 --            otherwise tall tiles (icon above the text). While searching, chips are plain items.
--- A level may also return on_back = function() -> true when it handled "back" itself.
+-- A level may also return:
+--   on_back = function() -> true when it handled "back" itself
+--   look = {width, item_height, font_size, radius, panel_alpha, curtain, accent, title = false,
+--           place = "center" | "cursor" | "side"}; submenus without a look take their parent's
+--   keys = {["alt+up"] = function(item) ... end, ...}: extra keys for the selected item
+--          (alt+up, alt+down, del, ctrl+z, f2); return "keep" to refresh
 
 local assdraw = require "mp.assdraw"
 
@@ -31,18 +36,22 @@ local cfg = {
     width = 400,
     item_height = 32,
     font_size = 15,
+    radius = 10,
+    panel_alpha = 0x1A,
+    curtain = 0x90,
     on_open = nil,
     on_close = nil,
     text = {search = "Поиск", empty = "Ничего не найдено", back = "Назад"},
 }
 
-local HEADER_H = 30 -- section caption
-local TILES_H = 64  -- row of tall chips
+local LOOK_KEYS = {"width", "item_height", "font_size", "radius", "panel_alpha", "curtain", "accent", "title", "place"}
 
 local overlay = mp.create_osd_overlay("ass-events")
 local stack = {}            -- open levels, stack[#stack] is the current one
 local is_open = false
 local root_id = nil
+local close_callback = nil  -- M.open(..., {on_close}) - called once when this menu closes
+local anchor = nil          -- mouse position when the menu opened (place = "cursor")
 local mouse = {x = -1, y = -1, moved = false}
 local pressed = {}          -- mouse buttons pressed while the menu was open
 local geo = nil             -- geometry of the last render (for hit testing)
@@ -84,10 +93,27 @@ local function clamp(lo, v, hi) return math.max(lo, math.min(hi, v)) end
 
 local function current() return stack[#stack] end
 
-local function row_height(row)
-    if row.header then return HEADER_H end
-    if row.chips and not row.compact then return TILES_H end
-    return cfg.item_height
+-- the look of a level: cfg, with the nearest look of this level or its parents over it
+local function look_of(level)
+    local L = {}
+    for k, v in pairs(cfg) do L[k] = v end
+    local found
+    for i = #stack, 1, -1 do
+        if stack[i] == level then found = i end
+        if found and stack[i].look then
+            for _, k in ipairs(LOOK_KEYS) do
+                if stack[i].look[k] ~= nil then L[k] = stack[i].look[k] end
+            end
+            break
+        end
+    end
+    return L
+end
+
+local function row_height(row, L)
+    if row.header then return math.floor(L.item_height * 0.9) end
+    if row.chips and not row.compact then return L.item_height * 2 end
+    return L.item_height
 end
 
 -- levels ------------------------------------------------------------------------------
@@ -138,6 +164,8 @@ local function build(level, keep_position)
     level.title = spec.title or ""
     level.items = spec.items or {}
     level.on_back = spec.on_back
+    level.look = spec.look
+    level.keys = spec.keys
     if keep_position then
         apply_filter(level)
         return
@@ -157,17 +185,17 @@ local function build(level, keep_position)
     fix_selection(level)
 end
 
-local function new_level(builder)
-    local level = {builder = builder, search = "", selected = 1, scroll = nil, items = {}, filtered = {}}
+local function new_level(builder, search)
+    local level = {builder = builder, search = search or "", selected = 1, scroll = nil, items = {}, filtered = {}}
     build(level)
     return level
 end
 
 -- how many rows fit from row s+1 on into the height avail
-local function rows_from(level, s, avail)
+local function rows_from(level, s, avail, L)
     local h, n = 0, 0
     for i = s + 1, #level.filtered do
-        local rh = row_height(level.filtered[i])
+        local rh = row_height(level.filtered[i], L)
         if h + rh > avail and n > 0 then break end
         h, n = h + rh, n + 1
     end
@@ -211,7 +239,7 @@ local function rect(ass, x1, y1, x2, y2, r)
 end
 
 -- a row of chips: tall tiles (icon above the text) or one compact line
-local function draw_chips(ass, row, x1, x2, iy, rh, selected_chip)
+local function draw_chips(ass, row, x1, x2, iy, rh, selected_chip, L)
     local n = #row.chips
     local gap, margin = 6, 8
     local cw = (x2 - x1 - margin * 2 - gap * (n - 1)) / n
@@ -223,24 +251,27 @@ local function draw_chips(ass, row, x1, x2, iy, rh, selected_chip)
         boxes[k] = {x1 = cx1, x2 = cx2}
         local selected = k == selected_chip
         if selected then
-            layer(ass, cfg.accent, 0xB0)
+            layer(ass, L.accent, 0xB0)
         else
             layer(ass, "#FFFFFF", 0xEE)
         end
-        rect(ass, cx1, by1, cx2, by2, 8)
-        local color = chip.active and cfg.accent or ((selected or not chip.muted) and cfg.fg or cfg.muted)
+        rect(ass, cx1, by1, cx2, by2, math.min(8, L.radius))
+        local color = chip.active and L.accent or chip.color or ((selected or not chip.muted) and L.fg or L.muted)
+        if selected then color = L.fg end
         local mid = (cx1 + cx2) / 2
         if row.compact then
             -- icon and text side by side, centered in the chip
             local label = chip.title or ""
-            local tw = select(2, label:gsub("[^\128-\191]", "")) * cfg.font_size * 0.5
+            local tw = select(2, label:gsub("[^\128-\191]", "")) * L.font_size * 0.5
             local start = mid - (tw + 26) / 2
-            if chip.icon then icon(ass, start + 10, (by1 + by2) / 2, chip.icon, 18, color) end
-            text(ass, start + 26, (by1 + by2) / 2, 4, esc(label), cfg.font_size - 1, color,
+            if chip.icon then icon(ass, start + 10, (by1 + by2) / 2, chip.icon, L.font_size + 3, color) end
+            text(ass, start + 26, (by1 + by2) / 2, 4, esc(label), L.font_size - 1, color,
                 string.format("\\clip(%f,%f,%f,%f)", cx1 + 4, by1, cx2 - 4, by2))
         else
-            if chip.icon then icon(ass, mid, by1 + 21, chip.icon, 22, color) end
-            text(ass, mid, by2 - 13, 5, esc(chip.title), cfg.font_size - 3, selected and cfg.fg or cfg.muted,
+            local ih = by2 - by1
+            if chip.icon then icon(ass, mid, by1 + ih * 0.36, chip.icon, math.floor(L.font_size * 1.45), color) end
+            text(ass, mid, by1 + ih * 0.78, 5, esc(chip.title), L.font_size - 3,
+                selected and L.fg or (chip.color or L.muted),
                 string.format("\\clip(%f,%f,%f,%f)", cx1 + 2, by1, cx2 - 2, by2))
         end
     end
@@ -251,24 +282,27 @@ local function render()
     if not is_open then return end
     local level = current()
     if not level or not update_resolution() then return end
+    local L = look_of(level)
 
-    local item_h = cfg.item_height
+    local item_h = L.item_height
     local pad = 6
-    local title_h = 40
+    local side = L.place == "side"
+    local title_h = (L.title == false and #stack == 1) and 0 or 40
     local search_h = level.search ~= "" and 32 or 0
-    local width = math.min(cfg.width, res.w - 40)
+    local width = math.min(L.width, res.w - (side and 0 or 40))
     local count = #level.filtered
-    local avail = math.max(item_h, res.h * 0.82 - title_h - search_h - pad * 2)
+    local avail = math.max(item_h, (side and res.h or res.h * 0.82) - title_h - search_h - pad * 2)
 
     -- total height of the rows; the panel does not jump while scrolling: it keeps avail when it scrolls
     local total = 0
-    for _, row in ipairs(level.filtered) do total = total + row_height(row) end
+    for _, row in ipairs(level.filtered) do total = total + row_height(row, L) end
     local content_h = count == 0 and item_h or math.min(total, avail)
+    if side then content_h = avail end
     local max_scroll = 0
     do
         local h, s = 0, count
-        while s > 0 and h + row_height(level.filtered[s]) <= avail do
-            h = h + row_height(level.filtered[s])
+        while s > 0 and h + row_height(level.filtered[s], L) <= avail do
+            h = h + row_height(level.filtered[s], L)
             s = s - 1
         end
         max_scroll = s
@@ -280,94 +314,106 @@ local function render()
     level.scroll = clamp(0, level.scroll, max_scroll)
 
     local panel_h = title_h + search_h + pad * 2 + content_h
-    local x1 = math.floor((res.w - width) / 2)
-    local y1 = math.floor((res.h - panel_h) / 2)
+    local x1, y1
+    if side then
+        x1, y1 = res.w - width, 0
+    elseif L.place == "cursor" and anchor then
+        x1 = clamp(10, anchor.x + 6, res.w - width - 10)
+        y1 = clamp(10, anchor.y - 12, res.h - panel_h - 10)
+    else
+        x1 = math.floor((res.w - width) / 2)
+        y1 = math.floor((res.h - panel_h) / 2)
+    end
     local x2, y2 = x1 + width, y1 + panel_h
     local items_y = y1 + title_h + search_h + pad
 
-    geo = {x1 = x1, y1 = y1, x2 = x2, y2 = y2, title_h = title_h, avail = avail, rows = {},
-           visible = rows_from(level, level.scroll, avail)}
+    geo = {x1 = x1, y1 = y1, x2 = x2, y2 = y2, title_h = title_h, avail = avail, rows = {}, L = L,
+           visible = rows_from(level, level.scroll, avail, L)}
 
     local ass = assdraw.ass_new()
 
     -- curtain
-    layer(ass, "#000000", 0x90)
-    rect(ass, 0, 0, res.w, res.h, 0)
+    if L.curtain < 255 then
+        layer(ass, "#000000", L.curtain)
+        rect(ass, 0, 0, res.w, res.h, 0)
+    end
 
     -- panel
-    layer(ass, cfg.bg, 0x1A, string.format("\\bord1\\3c&H%s&", bgr(cfg.outline)))
-    rect(ass, x1, y1, x2, y2, 10)
+    layer(ass, cfg.bg, L.panel_alpha, string.format("\\bord1\\3c&H%s&", bgr(cfg.outline)))
+    rect(ass, x1, y1, x2, y2, side and 0 or L.radius)
 
     -- title row: the menu title, or what the selected chip does
     local selected_row = level.filtered[level.selected]
     local tip = selected_row and selected_row.chips and level.chip and selected_row.chips[level.chip].tip
-    local title_x1 = x1 + 16
-    if #stack > 1 then
-        icon(ass, x1 + 22, y1 + title_h / 2, "arrow_back", 20,
-            (mouse.x >= x1 and mouse.x <= x1 + 44 and mouse.y >= y1 and mouse.y <= y1 + title_h) and cfg.accent or cfg.muted)
-        title_x1 = x1 + 44
+    if title_h > 0 then
+        local title_x1 = x1 + 16
+        if #stack > 1 then
+            icon(ass, x1 + 22, y1 + title_h / 2, "arrow_back", 20,
+                (mouse.x >= x1 and mouse.x <= x1 + 44 and mouse.y >= y1 and mouse.y <= y1 + title_h) and L.accent or L.muted)
+            title_x1 = x1 + 44
+        end
+        text(ass, (title_x1 + x2 - 16) / 2, y1 + title_h / 2, 5, esc(tip or level.title), L.font_size,
+            tip and L.fg or L.muted,
+            string.format("%s\\clip(%f,%f,%f,%f)", tip and "" or "\\b1", title_x1, y1, x2 - 16, y1 + title_h))
+        layer(ass, "#FFFFFF", 0xE0)
+        rect(ass, x1 + 10, y1 + title_h - 1, x2 - 10, y1 + title_h, 0)
     end
-    text(ass, (title_x1 + x2 - 16) / 2, y1 + title_h / 2, 5, esc(tip or level.title), cfg.font_size,
-        tip and cfg.fg or cfg.muted,
-        string.format("%s\\clip(%f,%f,%f,%f)", tip and "" or "\\b1", title_x1, y1, x2 - 16, y1 + title_h))
-    layer(ass, "#FFFFFF", 0xE0)
-    rect(ass, x1 + 10, y1 + title_h - 1, x2 - 10, y1 + title_h, 0)
 
     -- search row
     if search_h > 0 then
         local sy = y1 + title_h + search_h / 2 + 2
-        icon(ass, x1 + 24, sy, "search", 18, cfg.accent)
-        text(ass, x1 + 42, sy, 4, esc(level.search) .. "{\\1c&H" .. bgr(cfg.accent) .. "&}▏", cfg.font_size, cfg.fg,
+        icon(ass, x1 + 24, sy, "search", 18, L.accent)
+        text(ass, x1 + 42, sy, 4, esc(level.search) .. "{\\1c&H" .. bgr(L.accent) .. "&}▏", L.font_size, L.fg,
             string.format("\\clip(%f,%f,%f,%f)", x1 + 42, y1 + title_h, x2 - 12, y1 + title_h + search_h))
     end
 
     -- rows
     if count == 0 then
-        text(ass, (x1 + x2) / 2, items_y + item_h / 2, 5, esc(cfg.text.empty), cfg.font_size, cfg.muted)
+        text(ass, (x1 + x2) / 2, items_y + item_h / 2, 5, esc(cfg.text.empty), L.font_size, L.muted)
     end
     local iy = items_y
     for fi = level.scroll + 1, level.scroll + geo.visible do
         local item = level.filtered[fi]
-        local rh = row_height(item)
+        local rh = row_height(item, L)
         local cy = iy + rh / 2
         local selected = fi == level.selected
         local hit = {fi = fi, y1 = iy, y2 = iy + rh, header = item.header}
 
         if item.header then
             -- quiet caption: small, spaced, dim, sitting on the rows below it
-            text(ass, x1 + 18, iy + rh - 7, 1, esc(item.title), cfg.font_size - 4, cfg.muted, "\\b1\\fsp1")
+            text(ass, x1 + 18, iy + rh - 7, 1, esc(item.title), L.font_size - 4, item.color or L.muted, "\\b1\\fsp1")
         elseif item.chips then
-            hit.chips = draw_chips(ass, item, x1, x2, iy, rh, selected and level.chip or nil)
+            hit.chips = draw_chips(ass, item, x1, x2, iy, rh, selected and level.chip or nil, L)
         else
             if selected then
-                layer(ass, cfg.accent, 0xB0)
-                rect(ass, x1 + 5, iy + 1, x2 - 5, iy + rh - 1, 6)
+                layer(ass, L.accent, 0xB0)
+                rect(ass, x1 + 5, iy + 1, x2 - 5, iy + rh - 1, math.min(6, L.radius))
             end
             if item.active then
-                layer(ass, cfg.accent, 0)
+                layer(ass, L.accent, 0)
                 rect(ass, x1 + 7, iy + 8, x1 + 10, iy + rh - 8, 1.5)
             end
 
-            local color = item.active and cfg.accent or (item.muted and cfg.muted or cfg.fg)
-            if selected and (item.active or item.muted) then color = cfg.fg end
+            local color = item.active and L.accent or item.color or (item.muted and L.muted or L.fg)
+            if selected and (item.active or item.muted or item.color) then color = L.fg end
             local tx = x1 + 18
             if item.icon then
-                icon(ass, x1 + 28, cy, item.icon, 19, color)
+                icon(ass, x1 + 28, cy, item.icon, L.font_size + 4, color)
                 tx = x1 + 46
             end
 
             local right = x2 - 14
             if item.submenu then
-                icon(ass, x2 - 20, cy, "chevron_right", 20, cfg.muted)
+                icon(ass, x2 - 20, cy, "chevron_right", 20, L.muted)
                 right = x2 - 34
             end
             local hint_w = 0
             if item.hint and item.hint ~= "" then
-                hint_w = math.min(width * 0.45, #item.hint * cfg.font_size * 0.42 + 8)
-                text(ass, right, cy, 6, esc(item.hint), cfg.font_size - 2, selected and cfg.fg or cfg.muted,
+                hint_w = math.min(width * 0.45, #item.hint * L.font_size * 0.42 + 8)
+                text(ass, right, cy, 6, esc(item.hint), L.font_size - 2, selected and L.fg or L.muted,
                     string.format("\\clip(%f,%f,%f,%f)", right - hint_w, iy, right, iy + rh))
             end
-            text(ass, tx, cy, 4, esc(item.title), cfg.font_size, color,
+            text(ass, tx, cy, 4, esc(item.title), L.font_size, color,
                 string.format("%s\\clip(%f,%f,%f,%f)", (item.bold or item.active) and "\\b1" or "",
                     tx, iy, right - hint_w - 6, iy + rh))
         end
@@ -405,7 +451,7 @@ local function ensure_visible(level)
         -- keep the caption above the first row in view
         if level.scroll > 0 and level.filtered[level.scroll].header then level.scroll = level.scroll - 1 end
     else
-        while level.selected > level.scroll + rows_from(level, level.scroll, geo.avail) do
+        while level.selected > level.scroll + rows_from(level, level.scroll, geo.avail, geo.L) do
             level.scroll = level.scroll + 1
         end
     end
@@ -461,7 +507,7 @@ local function in_panel()
 end
 
 local function on_back_arrow()
-    return geo and #stack > 1 and mouse.x >= geo.x1 and mouse.x <= geo.x1 + 44
+    return geo and #stack > 1 and geo.title_h > 0 and mouse.x >= geo.x1 and mouse.x <= geo.x1 + 44
         and mouse.y >= geo.y1 and mouse.y <= geo.y1 + geo.title_h
 end
 
@@ -477,6 +523,9 @@ function M.close()
     overlay.data = ""
     overlay:remove()
     if cfg.on_close then cfg.on_close() end
+    local callback = close_callback
+    close_callback = nil
+    if callback then callback() end
 end
 
 local function back()
@@ -490,6 +539,8 @@ local function back()
         M.close()
     end
 end
+
+M.back = back
 
 function M.refresh()
     if not is_open then return end
@@ -564,6 +615,19 @@ local function selected_row()
     return level.filtered[level.selected]
 end
 
+-- extra keys of a level (the menu editor): the handler gets the selected item
+local function level_key(name)
+    return function ()
+        local level = current()
+        local handler = level and level.keys and level.keys[name]
+        if not handler then return end
+        local row = selected_row()
+        local item = row and row.chips and row.chips[level.chip or 1] or row
+        local result = handler(item)
+        if result == "keep" then M.refresh() end
+    end
+end
+
 local bindings = {
     {"mouse_move", function ()
         update_mouse()
@@ -619,6 +683,11 @@ local bindings = {
             back()
         end
     end, {repeatable = true}},
+    {"alt+up", level_key("alt+up"), {repeatable = true}},
+    {"alt+down", level_key("alt+down"), {repeatable = true}},
+    {"del", level_key("del")},
+    {"ctrl+z", level_key("ctrl+z"), {repeatable = true}},
+    {"f2", level_key("f2")},
     {"bs", function ()
         local level = current()
         if level.search ~= "" then set_search(utf8_pop(level.search)) else back() end
@@ -656,18 +725,30 @@ end
 
 function M.is_open() return is_open end
 
--- open a root menu; opening the same one again closes it
-function M.open(id, builder)
-    if is_open and root_id == id then return M.close() end
-    if not is_open then
+-- the OSC hooks (the ring menu uses them too)
+function M.hooks() return cfg.on_open, cfg.on_close end
+
+-- open a root menu; opening the same one again closes it.
+-- opts: on_close (called once when this menu closes), search (start with this search text)
+function M.open(id, builder, opts)
+    opts = opts or {}
+    if is_open and root_id == id and not opts.search then return M.close() end
+    if is_open then
+        -- another root menu replaces this one: its own close callback goes first
+        local callback = close_callback
+        close_callback = nil
+        if callback then callback() end
+    else
         is_open = true
         if cfg.on_open then cfg.on_open() end
         bind()
     end
     root_id = id
-    stack = {new_level(builder)}
+    close_callback = opts.on_close
     update_resolution()
     update_mouse()
+    anchor = {x = mouse.x, y = mouse.y}
+    stack = {new_level(builder, opts.search)}
     render()
 end
 
