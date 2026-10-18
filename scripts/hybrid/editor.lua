@@ -48,7 +48,28 @@ local function icon_name(icon)
     for _, i in ipairs(ICONS) do
         if i[1] == icon then return i[2] end
     end
+    if type(icon) == "string" and icon:sub(1, 5) == "file:" then return (icon:sub(6):gsub("%.%w+$", "")) end
     return icon
+end
+
+-- the "Мои иконки" part of an icon list: own icons from ~~/icons (icons.lua), then a caption for the built-in ones;
+-- pick(name) is the action of an icon
+local function own_icon_items(list, current, pick)
+    local icons = require "icons"
+    list[#list + 1] = {header = true, title = "МОИ ИКОНКИ"}
+    for _, own in ipairs(icons.list()) do
+        list[#list + 1] = {title = own.title, icon = own.name, hint = own.kind:upper(), active = own.name == current,
+                           action = function () return pick(own.name) end}
+    end
+    list[#list + 1] = {title = "Открыть папку с иконками", icon = "folder_open", hint = "кидай туда .svg или .png",
+        action = function ()
+            icons.make_dir(icons.dir())
+            mp.commandv("run", "explorer", icons.dir())
+            return "stay"
+        end}
+    list[#list + 1] = {title = "Обновить список", icon = "refresh", separator = true,
+                       action = function () icons.forget() return "keep" end}
+    list[#list + 1] = {header = true, title = "ВСТРОЕННЫЕ"}
 end
 
 -- ready-made buttons: title, icon, left click, tooltip
@@ -1228,6 +1249,10 @@ local function properties(index)
         if item.custom and item.custom.kind == "button" then
             add({title = "Сменить иконку", icon = item.custom.icon, hint = icon_name(item.custom.icon), submenu = function ()
                 local list = {}
+                own_icon_items(list, ed.skin.items[index].custom.icon, function (name)
+                    change(index, function (it) it.custom = {kind = "button", icon = name} end)
+                    return "keep"
+                end)
                 for _, i in ipairs(ICONS) do
                     list[#list + 1] = {title = i[2], icon = i[1], active = i[1] == ed.skin.items[index].custom.icon,
                         action = function ()
@@ -1328,6 +1353,9 @@ create_menu = function (at)
         end}
         items[#items + 1] = {title = "Своя кнопка (выбрать иконку)", icon = "add_box", submenu = function ()
             local list = {}
+            own_icon_items(list, nil, function (name)
+                add_item({id = new_custom_id(), custom = {kind = "button", icon = name}, w = 24, h = 24}, at)
+            end)
             for _, i in ipairs(ICONS) do
                 list[#list + 1] = {title = i[2], icon = i[1], action = function ()
                     add_item({id = new_custom_id(), custom = {kind = "button", icon = i[1]}, w = 24, h = 24}, at)
@@ -1745,9 +1773,13 @@ end
 -- open / close --------------------------------------------------------------------------
 
 function M.is_open() return ed ~= nil end
+function M.is_dirty() return ed ~= nil and ed.dirty end
 
 function M.open()
     if ed then return end
+    -- one editor at a time: the menu editor saves everything at once, so it just closes
+    local menu_editor = require "menu_editor"
+    if menu_editor.is_open() then menu_editor.close() end
     local skin = api.get_skin()
     ed = {
         skin = M.with_zones(api.copy(skin)), snapshot = api.copy(skin), undo = {}, dirty = false,

@@ -22,8 +22,10 @@
 --          (alt+up, alt+down, del, ctrl+z, f2); return "keep" to refresh
 
 local assdraw = require "mp.assdraw"
+local icons = require "icons"
 
 local M = {}
+M.icons = icons -- main.lua reaches own icons through here (it is at Lua's 200 locals limit)
 
 local cfg = {
     font = "Segoe UI",
@@ -228,8 +230,22 @@ local function text(ass, x, y, an, str, size, color, extra, font)
     ass:append(str)
 end
 
+-- a Material icon by name, or an own icon "file:..." (icons.lua): SVG as a drawing, PNG as an overlay
 local function icon(ass, x, y, name, size, color, extra)
-    text(ass, x, y, 5, name, size, color, extra, cfg.icon_font)
+    local kind = icons.kind(name)
+    if kind == "png" then
+        icons.png("menu", name, x / res.sx, y / res.sy, size * 1.1 / res.sy)
+    elseif kind == "svg" then
+        local d = icons.drawing_at(name, x, y, size)
+        if d then
+            ass:new_event()
+            ass:append(string.format("{\\rDefault\\an7\\pos(0,0)\\blur0\\bord0\\shad0\\1c&H%s&%s\\p1}",
+                bgr(color), extra or ""))
+            ass:append(d .. "{\\p0}")
+        end
+    elseif not icons.is_file(name) then
+        text(ass, x, y, 5, name, size, color, extra, cfg.icon_font)
+    end
 end
 
 local function rect(ass, x1, y1, x2, y2, r)
@@ -283,6 +299,7 @@ local function render()
     local level = current()
     if not level or not update_resolution() then return end
     local L = look_of(level)
+    icons.begin("menu")
 
     local item_h = L.item_height
     local pad = 6
@@ -439,6 +456,7 @@ local function render()
     overlay.z = 2000
     overlay.data = ass.text
     overlay:update()
+    icons.flush("menu", render)
 end
 
 -- navigation --------------------------------------------------------------------------
@@ -522,6 +540,7 @@ function M.close()
     unbind()
     overlay.data = ""
     overlay:remove()
+    icons.clear("menu")
     if cfg.on_close then cfg.on_close() end
     local callback = close_callback
     close_callback = nil

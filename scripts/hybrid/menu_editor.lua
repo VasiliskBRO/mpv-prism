@@ -146,9 +146,27 @@ end
 
 local container_screen, block_screen, root_screen
 
+-- the editing session: the video is paused while it lasts. The menu closes for a moment for an input
+-- field, the preview or reopening (S.busy) - that is not the end of editing
+local S = {active = false, was_paused = false, busy = false}
+
+local function end_session()
+    if not S.active then return end
+    S.active = false
+    mp.set_property_native("pause", S.was_paused)
+end
+
+local function on_menu_closed()
+    if not S.busy then end_session() end
+end
+
+local function hold() S.busy = true end
+
 local function reopen(owner, block)
+    S.busy = true
     if api.menu.is_open() then api.menu.close() end
-    api.menu.open(ID, root_screen)
+    api.menu.open(ID, root_screen, {on_close = on_menu_closed})
+    S.busy = false
     if owner then api.menu.push(container_screen(owner)) end
     if block then api.menu.push(block_screen(block)) end
 end
@@ -156,6 +174,7 @@ end
 local function ask(prompt, default, done, owner, block)
     local ok, input = pcall(require, "mp.input")
     if not ok then return end
+    hold()
     local submitted = false
     input.get({
         prompt = prompt .. " ", default_text = default or "",
@@ -204,6 +223,24 @@ local function icon_choices(get, set)
     return function ()
         local items = {{title = "Как обычно", icon = "block", active = get() == nil,
                         action = function () return change(function () set(nil) end) end}}
+        -- own icons from ~~/icons (icons.lua)
+        local icons = require "icons"
+        items[#items + 1] = {header = true, title = "МОИ ИКОНКИ"}
+        for _, own in ipairs(icons.list()) do
+            items[#items + 1] = {title = own.title, icon = own.name, hint = own.kind:upper(), active = get() == own.name,
+                action = function () return change(function () set(own.name) end) end}
+        end
+        items[#items + 1] = {title = "Открыть папку с иконками", icon = "folder_open",
+            hint = "кидай туда .svg или .png", action = function ()
+                icons.make_dir(icons.dir())
+                mp.commandv("run", "explorer", icons.dir())
+                return "stay"
+            end}
+        items[#items + 1] = {title = "Обновить список", icon = "refresh", action = function ()
+            icons.forget()
+            return "keep"
+        end, separator = true}
+        items[#items + 1] = {header = true, title = "ВСТРОЕННЫЕ"}
         for _, entry in ipairs(ICONS) do
             items[#items + 1] = {title = entry[2], icon = entry[1], active = get() == entry[1], hint = entry[1],
                 action = function () return change(function () set(entry[1]) end) end}
@@ -262,6 +299,7 @@ local function move_to_screen(block)
                     table.remove(children(owner), i)
                     table.insert(children(t.owner), block)
                 end)
+                hold()
                 mp.add_timeout(0.05, function () reopen(t.owner) end)
             end}
         end
@@ -525,6 +563,7 @@ local function file_screen(file)
         local items = {}
         items[#items + 1] = {title = "Редактировать это меню", icon = "edit", active = E.file == file, action = function ()
             switch_to(file)
+            hold()
             mp.add_timeout(0.05, function () reopen() end)
         end}
         items[#items + 1] = {title = "Открывать по правому клику", icon = "mouse", active = s.right == file,
@@ -610,6 +649,7 @@ root_screen = function ()
     items[#items].separator = true
     items[#items + 1] = {title = "Добавить…", icon = "add", submenu = add_screen(nil), separator = true}
     items[#items + 1] = {title = "Посмотреть", icon = "visibility", action = function ()
+        hold()
         mp.add_timeout(0.05, function ()
             api.open_def(E.def, {id = "preview", on_close = function ()
                 mp.add_timeout(0.05, function () if E then reopen() end end)
@@ -634,9 +674,33 @@ function M.undo()
 end
 
 function M.open()
+    -- one editor at a time: the skin editor closes first (unless it has unsaved changes)
+    local shell = require "editor"
+    if shell.is_open() then
+        if shell.is_dirty() then
+            mp.osd_message("Открыт редактор оболочки с несохранёнными правками: сначала «Сохранить» или «Выйти»", 4)
+            return
+        end
+        shell.close()
+    end
+    if not S.active then
+        S.active = true
+        S.was_paused = mp.get_property_native("pause")
+        mp.set_property_native("pause", true)
+    end
     local s = api.kit.settings()
     if not E then switch_to(s.right) end
     reopen()
+end
+
+function M.is_open() return S.active end
+
+-- closing from outside (the skin editor opens): everything is saved already
+function M.close()
+    if not S.active then return end
+    S.busy = false
+    if api.menu.is_open() then api.menu.close() end
+    end_session()
 end
 
 function M.init(functions)

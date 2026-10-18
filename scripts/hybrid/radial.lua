@@ -9,6 +9,7 @@
 
 local assdraw = require "mp.assdraw"
 local menu = require "menu"
+local icons = require "icons"
 
 local M = {}
 
@@ -89,6 +90,7 @@ end
 
 local function render()
     if not ring or not update_resolution() then return end
+    icons.begin("ring")
     local ass = assdraw.ass_new()
     local n = #ring.items
     local R = radius()
@@ -116,7 +118,19 @@ local function render()
         end
         local color = item.active and accent() or item.color or (item.muted and cfg.muted or cfg.fg)
         if selected then color = cfg.fg end
-        text(ass, x, y, 5, item.icon or "circle", selected and 26 or 22, color, nil, cfg.icon_font)
+        local size = selected and 26 or 22
+        local kind = icons.kind(item.icon)
+        if kind == "png" then
+            icons.png("ring", item.icon, x / res.sx, y / res.sy, size * 1.2 / res.sy)
+        elseif kind == "svg" then
+            local d = icons.drawing_at(item.icon, x, y, size)
+            if d then
+                layer(ass, color, 0, "\\p1")
+                ass:append(d .. "{\\p0}")
+            end
+        else
+            text(ass, x, y, 5, item.icon or "circle", size, color, nil, cfg.icon_font)
+        end
         -- the label outside the ring, dim; the hovered one bright
         local lx, ly = ring.cx + (R + BUTTON_R + 30) * math.cos(-math.pi / 2 + (k - 1) * 2 * math.pi / n),
                        ring.cy + (R + BUTTON_R + 30) * math.sin(-math.pi / 2 + (k - 1) * 2 * math.pi / n)
@@ -144,6 +158,7 @@ local function render()
     overlay.z = 2000
     overlay.data = ass.text
     overlay:update()
+    icons.flush("ring", render)
 end
 
 local unbind
@@ -155,6 +170,7 @@ function M.close()
     unbind()
     overlay.data = ""
     overlay:remove()
+    icons.clear("ring")
     local _, on_close = menu.hooks()
     if on_close then on_close() end
     if opts.on_close then opts.on_close() end

@@ -1206,6 +1206,7 @@ end
 
 local function render_wipe(osd)
     msg.trace("render_wipe()")
+    if osd == state.osd then menu.icons.clear("bar") end -- own PNG icons of the bar go with it
     osd.data = "" -- allows set_osd to immediately update on enable
     osd:remove()
 end
@@ -1977,6 +1978,16 @@ local function render_elements(master_ass)
                 buttontext = element.content() -- function objects
             elseif element.content ~= nil then
                 buttontext = element.content -- text objects
+            end
+
+            -- an own PNG icon: an overlay at the button's middle while the bar is (nearly) opaque
+            if element.png_icon and element.hitbox and (anim_override or 0) < 0x90 then
+                local sx, sy = get_virt_scale_factor()
+                if sx > 0 and sy > 0 then
+                    local h = element.hitbox
+                    menu.icons.png("bar", element.png_icon, (h.x1 + h.x2) / 2 / sx, (h.y1 + h.y2) / 2 / sy,
+                        element.png_size / sy)
+                end
             end
 
             -- add hover effects
@@ -4202,6 +4213,17 @@ local function osc_init()
                 ne = new_element(item.id, "button")
                 ne.content = custom.kind == "text" and mp.command_native({"escape-ass", custom.text or ""})
                     or (custom.icon or "radio_button_unchecked")
+                -- own icons (icons.lua): SVG as a drawing in the button's color, PNG as an overlay picture
+                local kind = custom.kind ~= "text" and menu.icons.kind(custom.icon)
+                if kind == "svg" then
+                    local name, size = custom.icon, item.size or 24
+                    ne.content = function ()
+                        return "{\\p1}" .. (menu.icons.drawing_local(name, size) or "") .. "{\\p0}"
+                    end
+                elseif kind == "png" then
+                    ne.content = ""
+                    ne.png_icon, ne.png_size = custom.icon, item.size or 24
+                end
             end
         end
     end
@@ -4616,6 +4638,7 @@ end
 
 local function render()
     msg.trace("rendering")
+    menu.icons.begin("bar") -- own PNG icons on the bar are overlays, collected while drawing
     local current_screen_sizeX = state.osd_dimensions.w
     local current_screen_sizeY = state.osd_dimensions.h
     local mouseX, mouseY = get_virt_mouse_pos()
@@ -4837,6 +4860,7 @@ local function render()
 
     -- submit
     set_osd(state.osd, osc_param.playresy * osc_param.display_aspect, osc_param.playresy, ass.text, 1000)
+    menu.icons.flush("bar", request_tick)
 end
 
 -- called by mpv on every frame
