@@ -840,6 +840,7 @@ local function make_item(block, c, as_tile)
         for k, v in pairs(made) do item[k] = v end
         local full = block.title or made.title or entry.title
         item.title = block.title or (as_tile and entry.tile) or made.title or entry.title
+        item.short = block.title or entry.tile or made.title or entry.title -- under a button of the ring
         item.icon = block.icon or made.icon or entry.icon
         item.hint = block.hint or made.hint or entry.key
         item.tip = full .. (entry.key and ("  ·  " .. entry.key) or "")

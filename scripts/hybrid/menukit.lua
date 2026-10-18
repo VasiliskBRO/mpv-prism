@@ -46,7 +46,7 @@ local function more_folder()
 end
 
 M.TEMPLATES = {
-    {id = "pult", name = "Пульт", about = "плитки сверху, ниже только то, что есть у видео",
+    {id = "pult", name = "Пульт", about = "плитки + список",
      def = {name = "Пульт", look = {}, blocks = {
         {type = "tiles", items = {item("open_file"), item("open_url"), item("history"), item("screenshot")}},
         {type = "header", title = "СЕЙЧАС ИГРАЕТ"},
@@ -57,7 +57,7 @@ M.TEMPLATES = {
         {type = "tiles", compact = true, items = {item("skins"), item("editor")}},
         item("quit", {muted = true}),
     }}},
-    {id = "list", name = "Простой список", about = "обычное меню, группы через линии",
+    {id = "list", name = "Простой список", about = "как обычно",
      def = {name = "Простой список", look = {}, blocks = {
         item("open_file"), item("open_url"), item("history"),
         {type = "separator"},
@@ -66,7 +66,7 @@ M.TEMPLATES = {
         {type = "separator"},
         more_folder(), item("skins"), item("editor"), item("quit"),
     }}},
-    {id = "ring", name = "Круг", about = "кольцо иконок вокруг курсора, остальное в «⋯»",
+    {id = "ring", name = "Круг", about = "кольцо у курсора",
      def = {name = "Круг", look = {shape = "ring"}, blocks = {
         item("open_file"), item("open_url"), item("subtitles"), item("speed"),
         item("audio"), item("screenshot"), item("history"),
@@ -78,7 +78,7 @@ M.TEMPLATES = {
             item("skins"), item("editor"), item("menu_editor"), item("quit"),
         }},
     }}},
-    {id = "empty", name = "Пустое", about = "только «Настроить меню» и «Выход» — собирай сам",
+    {id = "empty", name = "Пустое", about = "собери сам",
      def = {name = "Моё меню", look = {}, blocks = {item("menu_editor"), item("quit")}}},
 }
 

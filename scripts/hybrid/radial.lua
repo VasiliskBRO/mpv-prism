@@ -69,7 +69,8 @@ local function circle(ass, x, y, r)
 end
 
 local function radius() return ring.look.ring_radius or 120 end
-local function accent() return ring.look.accent or cfg.accent end
+-- the same accent as the list menus: the menu's own, or the theme's (menu.setup in main.lua)
+local function accent() return ring.look.accent or menu.accent() end
 
 -- where button k of n sits: the first one on top, clockwise
 local function position(k, n)
@@ -100,9 +101,9 @@ local function render()
     ass:rect_cw(0, 0, res.w, res.h)
     ass:draw_stop()
 
-    -- a soft disc behind the buttons and the middle
-    layer(ass, "#000000", 0x50)
-    circle(ass, ring.cx, ring.cy, R + BUTTON_R + 14)
+    -- a dark disc behind the buttons, their labels and the middle: the labels never sit on the video
+    layer(ass, "#000000", 0x38)
+    circle(ass, ring.cx, ring.cy, R + BUTTON_R + 26)
     layer(ass, "#000000", 0x30, "\\bord1\\3c&H404040&")
     circle(ass, ring.cx, ring.cy, CENTER_R)
 
@@ -131,11 +132,11 @@ local function render()
         else
             text(ass, x, y, 5, item.icon or "circle", size, color, nil, cfg.icon_font)
         end
-        -- the label outside the ring, dim; the hovered one bright
-        local lx, ly = ring.cx + (R + BUTTON_R + 30) * math.cos(-math.pi / 2 + (k - 1) * 2 * math.pi / n),
-                       ring.cy + (R + BUTTON_R + 30) * math.sin(-math.pi / 2 + (k - 1) * 2 * math.pi / n)
-        text(ass, lx, ly, 5, esc(item.title), (ring.look.font_size or 15) - 2, selected and cfg.fg or cfg.muted,
-            "\\bord2\\3c&H000000&\\3a&H60&")
+        -- the label under the button, on the disc: white, a bit dimmed; the hovered one bright and bold
+        local half = math.pi * R / n - 4 -- half of the space between two buttons
+        text(ass, x, y + BUTTON_R + 11, 5, esc(item.short or item.title), (ring.look.font_size or 15) - 2, cfg.fg,
+            string.format("%s\\1a&H%02X&\\clip(%f,%f,%f,%f)", selected and "\\b1" or "", selected and 0 or 0x50,
+                x - half, y, x + half, y + BUTTON_R + 22))
     end
 
     -- the middle: what the hovered button does (its hint below), or a cross (cancel)
@@ -143,9 +144,9 @@ local function render()
     if h then
         local clip = string.format("\\clip(%f,%f,%f,%f)", ring.cx - CENTER_R + 4, ring.cy - CENTER_R,
                                    ring.cx + CENTER_R - 4, ring.cy + CENTER_R)
-        text(ass, ring.cx, ring.cy - (h.hint and 6 or 0), 5, esc(h.title) .. (h.submenu and " ›" or ""), 12, cfg.fg,
-            "\\b1\\q2" .. clip)
-        if h.hint then text(ass, ring.cx, ring.cy + 10, 5, esc(h.hint), 10, accent(), clip) end
+        -- the name is already under the button: the middle shows its key (or "›" for a submenu)
+        local mark = h.hint or (h.submenu and "›" or "•")
+        text(ass, ring.cx, ring.cy, 5, esc(mark), h.hint and 13 or 22, accent(), "\\b1\\q2" .. clip)
     else
         text(ass, ring.cx, ring.cy, 5, "close", 22, cfg.muted, nil, cfg.icon_font)
     end

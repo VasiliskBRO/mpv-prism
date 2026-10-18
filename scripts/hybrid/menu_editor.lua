@@ -120,25 +120,28 @@ local function describe(b)
     if b.type == "item" then
         local entry = b.ref and api.by_id[b.ref]
         local hint = {}
-        if not entry then hint[#hint + 1] = "своя" end
+        -- the hint says what kind of block it is: short and grey
+        hint[#hint + 1] = entry and "пункт" or "своя кнопка"
         if b.when then hint[#hint + 1] = ({always = "всегда", playing = "при видео", idle = "без видео"})[b.when] end
         return {title = item_title(b), icon = b.icon or (entry and entry.icon) or "radio_button_unchecked",
-                hint = table.concat(hint, ", "), color = b.color, muted = b.muted}
+                hint = table.concat(hint, " · "), color = b.color, muted = b.muted}
     elseif b.type == "tiles" then
+        -- the first names only: the row of tiles is recognised by them, the count says the rest
         local names = {}
-        for _, i in ipairs(b.items) do
+        for k, i in ipairs(b.items) do
             local entry = i.ref and api.by_id[i.ref]
-            names[#names + 1] = i.title or (entry and (entry.tile or entry.title)) or "?"
+            if k <= 3 then names[#names + 1] = i.title or (entry and (entry.tile or entry.title)) or "?" end
         end
-        return {title = #names > 0 and ("Плитки: " .. table.concat(names, ", ")) or "Плитки (пусто)",
-                icon = "view_module", hint = b.compact and "в строку" or "крупные"}
+        local title = #names > 0 and table.concat(names, ", ") .. (#b.items > 3 and "…" or "") or "Пустой ряд"
+        return {title = title, icon = "view_module",
+                hint = (b.compact and "плитки в строку" or "плитки") .. " · " .. #b.items}
     elseif b.type == "folder" then
         return {title = b.title, icon = b.icon or "folder",
                 hint = (b.shape == "ring" and "круг" or "папка") .. " · " .. #b.blocks}
     elseif b.type == "header" then
-        return {title = "«" .. b.title .. "»", icon = "title", hint = "заголовок"}
+        return {title = b.title, icon = "title", hint = "заголовок"}
     end
-    return {title = "────────", icon = "horizontal_rule", hint = "линия", muted = true}
+    return {title = "Линия", icon = "horizontal_rule", hint = "разделитель", muted = true}
 end
 
 -- reopening after a text input (the input field needs the keyboard, so the menu closes for it);
@@ -518,7 +521,11 @@ local function rows_of(owner, items)
     for _, b in ipairs(children(owner)) do
         local d = describe(b)
         d.block = b
-        d.submenu = block_screen(b)
+        -- opens its settings like a submenu, but without the "›" on every row (the hint says what it is)
+        d.action = function ()
+            api.menu.push(block_screen(b))
+            return "stay"
+        end
         items[#items + 1] = d
     end
 end

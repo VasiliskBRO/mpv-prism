@@ -99,16 +99,19 @@ local function current() return stack[#stack] end
 local function look_of(level)
     local L = {}
     for k, v in pairs(cfg) do L[k] = v end
-    local found
+    local found, own_curtain
     for i = #stack, 1, -1 do
         if stack[i] == level then found = i end
         if found and stack[i].look then
             for _, k in ipairs(LOOK_KEYS) do
                 if stack[i].look[k] ~= nil then L[k] = stack[i].look[k] end
             end
+            own_curtain = stack[i].look.curtain ~= nil
             break
         end
     end
+    -- a side panel leaves the video visible: only a light dimming unless the menu sets its own
+    if L.place == "side" and not own_curtain then L.curtain = 0xD8 end
     return L
 end
 
@@ -281,12 +284,12 @@ local function draw_chips(ass, row, x1, x2, iy, rh, selected_chip, L)
             local tw = select(2, label:gsub("[^\128-\191]", "")) * L.font_size * 0.5
             local start = mid - (tw + 26) / 2
             if chip.icon then icon(ass, start + 10, (by1 + by2) / 2, chip.icon, L.font_size + 3, color) end
-            text(ass, start + 26, (by1 + by2) / 2, 4, esc(label), L.font_size - 1, color,
+            text(ass, start + 26, (by1 + by2) / 2, 4, esc(label), L.font_size, color,
                 string.format("\\clip(%f,%f,%f,%f)", cx1 + 4, by1, cx2 - 4, by2))
         else
             local ih = by2 - by1
             if chip.icon then icon(ass, mid, by1 + ih * 0.36, chip.icon, math.floor(L.font_size * 1.45), color) end
-            text(ass, mid, by1 + ih * 0.78, 5, esc(chip.title), L.font_size - 3,
+            text(ass, mid, by1 + ih * 0.78, 5, esc(chip.title), L.font_size - 2,
                 selected and L.fg or (chip.color or L.muted),
                 string.format("\\clip(%f,%f,%f,%f)", cx1 + 2, by1, cx2 - 2, by2))
         end
@@ -744,8 +747,9 @@ end
 
 function M.is_open() return is_open end
 
--- the OSC hooks (the ring menu uses them too)
+-- the OSC hooks and the accent color (the ring menu uses them too)
 function M.hooks() return cfg.on_open, cfg.on_close end
+function M.accent() return cfg.accent end
 
 -- open a root menu; opening the same one again closes it.
 -- opts: on_close (called once when this menu closes), search (start with this search text)
