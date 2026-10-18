@@ -12,6 +12,12 @@
 --     glow           true: the played part of the seekbar glows in the accent color
 --     handle_color   color of the seekbar handle "#RRGGBB" (default: from the theme)
 --     handle_border_color  its inner border "#RRGGBB", "none" - no border (default: from the theme)
+--   volume scale (the volume widget):
+--     volume_max     top of the scale in % (sets mpv's volume-max), default: from mpv.conf
+--     volume_step    % per wheel tick / arrow key, default: volume_step of hybrid.conf
+--     volume_number  false: no value next to the track
+--     volume_color   fill of the track "#RRGGBB", default: the theme color
+--     volume_dir     "horizontal": the widget lies (its item's h is the thickness), default: upright
 --   zones_edited - true: the hover zones are items of the skin (kind "zone"), the standard ones
 --              included (zone_bottom, zone_top, zone_volume; a deleted one does not work);
 --              otherwise the standard zones are computed and there are no own zones
@@ -165,6 +171,13 @@ local function normalize(skin)
     if type(skin.handle_color) ~= "string" or not skin.handle_color:match("^#%x%x%x%x%x%x$") then skin.handle_color = nil end
     local hbc = skin.handle_border_color
     if type(hbc) ~= "string" or not (hbc == "none" or hbc:match("^#%x%x%x%x%x%x$")) then skin.handle_border_color = nil end
+    local vmax = tonumber(skin.volume_max)
+    skin.volume_max = vmax and math.max(10, math.min(1000, math.floor(vmax))) or nil
+    local vstep = tonumber(skin.volume_step)
+    skin.volume_step = vstep and vstep > 0 and math.min(50, vstep) or nil
+    if skin.volume_number ~= false then skin.volume_number = nil end -- only "false" is kept
+    if type(skin.volume_color) ~= "string" or not skin.volume_color:match("^#%x%x%x%x%x%x$") then skin.volume_color = nil end
+    skin.volume_dir = skin.volume_dir == "horizontal" and "horizontal" or nil
     -- the skin this one was copied from: "Как по умолчанию" goes back to its original
     skin.based_on = type(skin.based_on) == "string" and skin.based_on:match("^[%w_%-]+$") and skin.based_on or nil
     return skin
@@ -201,7 +214,8 @@ end
 local KEY_ORDER = {"id", "custom", "anchor", "x", "w", "r", "bottom", "h", "priority", "hide_below", "collapse",
                    "size", "color", "hover", "alpha", "font", "bg", "bg_color", "bg_alpha", "radius", "pad", "show_in", "tooltip", "actions"}
 local LOOK_KEYS = {"theme", "seekbar_height", "background", "bg_inset", "bg_radius", "bg_color", "bg_alpha", "glow",
-                   "handle_color", "handle_border_color"}
+                   "handle_color", "handle_border_color",
+                   "volume_max", "volume_step", "volume_number", "volume_color", "volume_dir"}
 M.LOOK_KEYS = LOOK_KEYS
 
 local function json_value(value)

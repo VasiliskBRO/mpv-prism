@@ -78,6 +78,11 @@ local T = {
     quality = "Качество",
     quality_loading = "Узнаю доступные качества…",
     quality_none = "Качество меняется только у стримов и онлайн-видео",
+    open_url = "Открыть ссылку…",
+    url_prompt = "Ссылка или путь к файлу:",
+    url_opening = "Открываю: ",
+    url_queued = "Добавлено в плейлист: ",
+    url_none = "В буфере обмена нет ссылки или пути к файлу",
 }
 
 local LANGS = {
@@ -393,6 +398,57 @@ local function ask_text(prompt, default, done)
     end})
 end
 
+-- links: Ctrl+V opens a link or a file path from the clipboard at once, Ctrl+Shift+V queues it
+
+-- a pasted text -> something mpv can open, or nil: the first non-empty line without quotes and
+-- spaces around it; "youtube.com/..." without a scheme gets https://
+local function clean_link(text)
+    if type(text) ~= "string" then return nil end
+    local line = text:match("^%s*([^\r\n]+)")
+    if not line then return nil end
+    line = line:gsub("^%s+", ""):gsub("%s+$", "")
+    -- quotes around (also « » — those are two bytes each, so not in a [...] class)
+    local before
+    repeat
+        before = line
+        line = line:gsub("^[\"'<]", ""):gsub("[\"'>]$", ""):gsub("^«", ""):gsub("»$", "")
+    until line == before
+    if line == "" then return nil end
+    if is_url(line) then return line end
+    if line:find("^[%w-]+%.[%w.-]+/") or line:find("^www%.") then return "https://" .. line end
+    local path = line:gsub("^file:///", "")
+    if utils.file_info(path) then return path end
+    return nil
+end
+
+local function short(link)
+    return #link > 70 and (link:sub(1, 67) .. "...") or link
+end
+
+local function open_link(text, queue)
+    local link = clean_link(text)
+    if not link then
+        mp.osd_message(T.url_none, 3)
+        return
+    end
+    if queue and prop("playlist-count", 0) > 0 then
+        mp.commandv("loadfile", link, "append")
+        mp.osd_message(T.url_queued .. short(link), 3)
+    else
+        mp.commandv("loadfile", link, "replace")
+        mp.osd_message(T.url_opening .. short(link), 3)
+    end
+end
+
+local function clipboard()
+    return mp.get_property("clipboard/text", "")
+end
+
+-- the input field with the clipboard already pasted in (if it holds a link)
+local function ask_link()
+    ask_text(T.url_prompt, clean_link(clipboard()) or "", function (text) open_link(text) end)
+end
+
 local function report(ok, err, text)
     mp.osd_message(ok and text or (T.skin_failed .. tostring(err)), 3)
 end
@@ -616,6 +672,7 @@ local function main_menu()
     local path = absolute_path(mp.get_property("path"))
 
     add({title = T.open_file, icon = "folder_open", hint = "Ctrl+O", submenu = browser(start_dir(), "media")})
+    add({title = T.open_url, icon = "link", hint = "Ctrl+V", action = function () mp.add_timeout(0.05, ask_link) end})
     add({title = T.history, icon = "history", hint = "Ctrl+H", submenu = history})
     add({title = T.playlist, icon = "queue_music",
          hint = pl_count > 0 and (prop("playlist-pos-1", 0) .. "/" .. pl_count) or nil, submenu = playlist})
@@ -688,6 +745,9 @@ function M.init(renderer, skin_hooks)
     end)
     mp.add_key_binding(nil, "open-file", function () menu.open("open-file", browser(start_dir(), "media")) end)
     mp.add_key_binding(nil, "load-subtitles", function () menu.open("load-subtitles", browser(start_dir(), "sub")) end)
+    mp.add_key_binding(nil, "paste", function () open_link(clipboard()) end)
+    mp.add_key_binding(nil, "paste-queue", function () open_link(clipboard(), true) end)
+    mp.add_key_binding(nil, "open-url", ask_link)
 end
 
 return M

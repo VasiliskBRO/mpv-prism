@@ -2317,56 +2317,90 @@ local function window_controls()
     end
 end
 
--- Volume widget (uosc style): vertical slider at the screen edge, shown when the cursor comes close
+-- the volume scale of the skin (editor: properties of the volume widget), filled in next to get_skin():
+-- volume_skin.get() -> {max, step, number, color, horizontal}
+local volume_skin = {}
+
+-- Volume widget (uosc style): vertical slider at the screen edge, shown when the cursor comes close;
+-- the skin may lay it horizontally: the speaker button on the left, the track, the value on the right
 local function volume_layout()
     if not elements["vol_slider"] then return end
     if user_opts.volume_widget == "no" or state.audio_track_count == 0 or state.is_image then return end
 
     local W, H = osc_param.playresx, osc_param.playresy
+    local look = volume_skin.get()
     local size = user_opts.volume_size
     local top_y = window_controls_enabled() and 50 or 0
     local bottom_y = H - osc_param.video_margins.b * H
     local side = user_opts.volume_widget
-    local x1, y1, y2
+    local x1, y1, x2, y2
     local sv = osc_param.skin_volume
-    if sv then
+    if sv and look.horizontal then
+        -- the skin item's box: its height is the thickness, its width the length
+        size = math.max(12, sv.y2 - sv.y1)
+        x1, y1, y2 = sv.x1, sv.y1, sv.y1 + size
+        x2 = math.max(sv.x2, sv.x1 + size * 2 + 40)
+        side = (sv.x1 + sv.x2) / 2 < W / 2 and "left" or "right"
+    elseif sv then
         -- the skin has the widget as an item ("volume"): its box is the slider plus the mute button
         size = math.max(12, sv.x2 - sv.x1)
         x1, y1, y2 = sv.x1, sv.y1, math.max(sv.y2, sv.y1 + size * 2 + 30)
+        x2 = x1 + size
         side = (sv.x1 + sv.x2) / 2 < W / 2 and "left" or "right"
+    elseif look.horizontal then
+        -- lying at the screen edge, in the middle of its height
+        local width = math.floor(math.min(size * 6, W * 0.4))
+        if width < size * 3 then return end -- window too small
+        local margin = math.floor(size / 2)
+        x1 = side == "left" and margin or (W - margin - width)
+        x2 = x1 + width
+        y1 = top_y + math.floor((bottom_y - top_y - size) / 2)
+        y2 = y1 + size
     else
         local available = bottom_y - top_y
         local height = math.floor(math.min(size * 8, available * 0.8))
         if height < size * 3 then return end -- window too small
         local margin = math.floor(size / 2)
         x1 = side == "left" and margin or (W - margin - size)
+        x2 = x1 + size
         y1 = top_y + math.floor((available - height) / 2)
         y2 = y1 + height
     end
-    osc_param.volume_rect = {x1 = x1, y1 = y1, x2 = x1 + size, y2 = y2}
-    -- one capsule: the value on top (26 px), the track, the speaker button at the bottom
-    local slider_y1 = y1 + 26
-    local slider_y2 = y2 - size - 2
+    osc_param.volume_rect = {x1 = x1, y1 = y1, x2 = x2, y2 = y2}
 
     local lo = add_layout("vol_slider")
-    lo.geometry = {x = x1, y = slider_y1, an = 7, w = size, h = slider_y2 - slider_y1}
+    if look.horizontal then
+        -- one capsule: the speaker button on the left, the track, the value on the right (34 px)
+        local slider_x1 = x1 + size + 2
+        local slider_x2 = x2 - (look.number and 38 or 6)
+        lo.geometry = {x = slider_x1, y = y1, an = 7, w = slider_x2 - slider_x1, h = size}
+    else
+        -- one capsule: the value on top (26 px), the track, the speaker button at the bottom
+        local slider_y1 = y1 + (look.number and 26 or 4)
+        local slider_y2 = y2 - size - 2
+        lo.geometry = {x = x1, y = slider_y1, an = 7, w = size, h = slider_y2 - slider_y1}
+    end
     lo.group = "vol"
     lo.layer = 60
-    lo.vol_card = {x1 = x1, y1 = y1, x2 = x1 + size, y2 = y2}
+    lo.vol_card = {x1 = x1, y1 = y1, x2 = x2, y2 = y2}
 
     lo = add_layout("vol_mute")
-    lo.geometry = {x = x1 + size / 2, y = y2 - size / 2, an = 5, w = 24, h = 24}
+    if look.horizontal then
+        lo.geometry = {x = x1 + size / 2 + 2, y = y1 + size / 2, an = 5, w = 24, h = 24}
+    else
+        lo.geometry = {x = x1 + size / 2, y = y2 - size / 2, an = 5, w = 24, h = 24}
+    end
     lo.style = osc_styles.control_3
     lo.group = "vol"
     lo.layer = 60
 
     -- the proximity zone must not overlap the bottom/top show zones (separate input sections)
     local zone_x1 = side == "left" and 0 or math.min(x1, W - size * 3.5)
-    local zone_x2 = side == "left" and math.max(x1 + size, size * 3.5) or W
+    local zone_x2 = side == "left" and math.max(x2, size * 3.5) or W
     local zone_y1 = osc_param.areas["showhide_wc"] and osc_param.areas["showhide_wc"][1].y2 or 0
     local zone_y2 = osc_param.areas["showhide"] and osc_param.areas["showhide"][1].y1 or bottom_y
     add_area("showhide_vol", zone_x1, zone_y1, zone_x2, zone_y2)
-    add_area("input_vol", x1 - 8, y1 - 8, x1 + size + 8, y2 + 8)
+    add_area("input_vol", x1 - 8, y1 - 8, x2 + 8, y2 + 8)
 end
 
 --
@@ -2662,6 +2696,17 @@ local apply_skin_look -- skin colors / seekbar thickness over hybrid.conf, set u
 local function get_skin()
     if not current_skin then current_skin = skins.load(user_opts.skin) end
     return current_skin
+end
+
+function volume_skin.get()
+    local skin = (user_opts.layout == "skin" and not state.is_image) and get_skin() or {}
+    return {
+        max = skin.volume_max, -- applied to mpv's volume-max by apply_skin_look()
+        step = skin.volume_step or user_opts.volume_step,
+        number = skin.volume_number ~= false,
+        color = skin.volume_color,
+        horizontal = skin.volume_dir == "horizontal",
+    }
 end
 
 -- button styles by element; everything not listed is a side button (control_3)
@@ -4001,7 +4046,12 @@ local function osc_init()
     -- the track runs between the handle's centers at 0 and 100%: VOL_INSET from the hitbox ends
     local VOL_INSET = 8
     local function volume_from_mouse(element)
-        local _, mouse_y = get_virt_mouse_pos()
+        local mouse_x, mouse_y = get_virt_mouse_pos()
+        if volume_skin.get().horizontal then
+            local x1, x2 = element.hitbox.x1 + VOL_INSET, element.hitbox.x2 - VOL_INSET
+            set_volume_value((mouse_x - x1) / (x2 - x1) * volume_max())
+            return
+        end
         local y1, y2 = element.hitbox.y1 + VOL_INSET, element.hitbox.y2 - VOL_INSET
         set_volume_value((y2 - mouse_y) / (y2 - y1) * volume_max())
     end
@@ -4010,7 +4060,9 @@ local function osc_init()
     ne.enabled = state.audio_track_count > 0
     ne.draw = function (element, ass, anim)
         local x1, y1, x2, y2 = get_element_hitbox(element)
-        local cx = (x1 + x2) / 2
+        local look = volume_skin.get()
+        local horizontal = look.horizontal
+        local cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
         local vmax = volume_max()
         local volume = state.volume or 0
         local active = element.state.pressed or mouse_hit(element)
@@ -4020,61 +4072,87 @@ local function osc_init()
             ass:round_rect_cw(x - r, y - r, x + r, y + r, r)
             ass:draw_stop()
         end
+        -- a bar along the track from a to b (0..1 of its length), tw thick
+        local tw = active and 8 or 6
+        local ta, tb = horizontal and x1 + VOL_INSET or y2 - VOL_INSET, horizontal and x2 - VOL_INSET or y1 + VOL_INSET
+        local function at(f) return ta + (tb - ta) * f end
+        local function bar(a, b, thick)
+            local p, q = math.min(at(a), at(b)), math.max(at(a), at(b))
+            ass:draw_start()
+            if horizontal then
+                ass:round_rect_cw(p, cy - thick / 2, q, cy + thick / 2, thick / 2)
+            else
+                ass:round_rect_cw(cx - thick / 2, p, cx + thick / 2, q, thick / 2)
+            end
+            ass:draw_stop()
+        end
 
         -- one glass capsule around the number, the track and the speaker button
         custom_layer(ass, element, anim, user_opts.osc_color, 0x48)
         ass:draw_start()
-        ass:round_rect_cw(card.x1, card.y1, card.x2, card.y2, math.min(18, (card.x2 - card.x1) / 2))
+        ass:round_rect_cw(card.x1, card.y1, card.x2, card.y2,
+            math.min(18, (math.min(card.x2 - card.x1, card.y2 - card.y1)) / 2))
         ass:draw_stop()
 
         -- thin track like the seekbar, a bit thicker under the mouse
-        local tw = active and 8 or 6
-        local ty1, ty2 = y1 + VOL_INSET, y2 - VOL_INSET
-        local fill_y = ty2 - (ty2 - ty1) * math.min(volume / vmax, 1)
+        local fill = math.min(volume / vmax, 1)
         custom_layer(ass, element, anim, "#FFFFFF", 0xC8)
-        ass:draw_start()
-        ass:round_rect_cw(cx - tw / 2, ty1, cx + tw / 2, ty2, tw / 2)
-        ass:draw_stop()
-        local fill_color = user_opts.volumebar_match_seek_color and user_opts.seekbarfg_color or user_opts.side_buttons_color
+        bar(0, 1, tw)
+        local fill_color = look.color
+            or (user_opts.volumebar_match_seek_color and user_opts.seekbarfg_color or user_opts.side_buttons_color)
         if volume > 0 then
             custom_layer(ass, element, anim, state.mute and "#8A8A8A" or fill_color, 0)
-            ass:draw_start()
-            ass:round_rect_cw(cx - tw / 2, fill_y, cx + tw / 2, ty2, tw / 2)
-            ass:draw_stop()
+            bar(0, fill, tw)
         end
 
         -- 100% mark when volume-max is above 100
         if vmax > 100 then
-            local y100 = ty2 - (ty2 - ty1) * (100 / vmax)
+            local m = at(100 / vmax)
             custom_layer(ass, element, anim, "#FFFFFF", 0x50)
             ass:draw_start()
-            ass:rect_cw(cx - tw / 2 - 5, y100 - 1, cx + tw / 2 + 5, y100 + 1)
+            if horizontal then
+                ass:rect_cw(m - 1, cy - tw / 2 - 5, m + 1, cy + tw / 2 + 5)
+            else
+                ass:rect_cw(cx - tw / 2 - 5, m - 1, cx + tw / 2 + 5, m + 1)
+            end
             ass:draw_stop()
         end
 
         -- handle in the seekbar handle colors (the skin's "Цвет кружка"), grey when muted
+        local hx, hy = horizontal and at(fill) or cx, horizontal and cy or at(fill)
         local r = active and 8 or 7
         local border = user_opts.seek_handle_border_color
         local inner = r
         if border ~= "" and not state.mute then
             custom_layer(ass, element, anim, border, 0)
-            circle(cx, fill_y, r)
+            circle(hx, hy, r)
             inner = r - 2
         end
         custom_layer(ass, element, anim, state.mute and "#BBBBBB" or user_opts.seek_handle_color, 0)
-        circle(cx, fill_y, inner)
+        circle(hx, hy, inner)
 
-        -- the value above the track: accent over 100%, dim when muted
-        local text = tostring(math.floor(volume + 0.5))
-        local color = state.mute and "#8A8A8A" or (volume > 100 and user_opts.seekbarfg_color or "#FFFFFF")
-        custom_text(ass, element, anim, cx, card.y1 + 15, 5, text, 14, color, "\\bord0")
+        -- the value above (or right of) the track: accent over 100%, dim when muted
+        if look.number then
+            local text = tostring(math.floor(volume + 0.5))
+            local color = state.mute and "#8A8A8A" or (volume > 100 and user_opts.seekbarfg_color or "#FFFFFF")
+            if horizontal then
+                custom_text(ass, element, anim, card.x2 - 20, cy, 5, text, 14, color, "\\bord0")
+            else
+                custom_text(ass, element, anim, cx, card.y1 + 15, 5, text, 14, color, "\\bord0")
+            end
+        end
 
-        -- hint next to the slider
+        -- hint next to the slider (under it when it lies)
         if mouse_hit(element) and not element.state.pressed and user_opts.tooltip_hints then
-            local _, mouse_y = get_virt_mouse_pos()
+            local mouse_x, mouse_y = get_virt_mouse_pos()
             local tw = estimate_text_width(locale.volume_hint, osc_styles.tooltip)
-            local tx = user_opts.volume_widget == "left" and (x2 + 14 + tw / 2) or (x1 - 14 - tw / 2)
-            draw_tooltip(ass, tx, mouse_y + user_opts.tooltip_font_size / 2, tw, osc_styles.tooltip, locale.volume_hint)
+            if horizontal then
+                local tx = math.max(tw / 2 + 4, math.min(osc_param.playresx - tw / 2 - 4, mouse_x))
+                draw_tooltip(ass, tx, card.y2 + 14 + user_opts.tooltip_font_size, tw, osc_styles.tooltip, locale.volume_hint)
+            else
+                local tx = user_opts.volume_widget == "left" and (x2 + 14 + tw / 2) or (x1 - 14 - tw / 2)
+                draw_tooltip(ass, tx, mouse_y + user_opts.tooltip_font_size / 2, tw, osc_styles.tooltip, locale.volume_hint)
+            end
         end
     end
     ne.eventresponder["mbtn_left_down"] = function (element)
@@ -4090,8 +4168,8 @@ local function osc_init()
         mp.set_property_native("mute", false)
         mp.set_property_native("volume", 100)
     end
-    ne.eventresponder["wheel_up_press"] = function () set_volume_value(state.volume + user_opts.volume_step) end
-    ne.eventresponder["wheel_down_press"] = function () set_volume_value(state.volume - user_opts.volume_step) end
+    ne.eventresponder["wheel_up_press"] = function () set_volume_value(state.volume + volume_skin.get().step) end
+    ne.eventresponder["wheel_down_press"] = function () set_volume_value(state.volume - volume_skin.get().step) end
 
     ne = new_element("vol_mute", "button")
     ne.enabled = state.audio_track_count > 0
@@ -4101,8 +4179,8 @@ local function osc_init()
     end
     ne.eventresponder["mbtn_left_up"] = function () mp.commandv("cycle", "mute") end
     ne.eventresponder["mbtn_right_up"] = function () mp.command("script-binding hybrid/audio-device") end
-    ne.eventresponder["wheel_up_press"] = function () set_volume_value(state.volume + user_opts.volume_step) end
-    ne.eventresponder["wheel_down_press"] = function () set_volume_value(state.volume - user_opts.volume_step) end
+    ne.eventresponder["wheel_up_press"] = function () set_volume_value(state.volume + volume_skin.get().step) end
+    ne.eventresponder["wheel_down_press"] = function () set_volume_value(state.volume - volume_skin.get().step) end
 
     -- objects made in the skin editor: buttons with an icon and text labels
     if user_opts.layout == "skin" then
@@ -5333,6 +5411,14 @@ end
 
 mp.add_key_binding(nil, "pip", toggle_pip)
 
+-- arrows / wheel over the video (input.conf): the volume step of the skin, no "Volume: N%" text
+mp.add_key_binding(nil, "volume-up", function ()
+    mp.commandv("no-osd", "add", "volume", tostring(volume_skin.get().step))
+end, {repeatable = true})
+mp.add_key_binding(nil, "volume-down", function ()
+    mp.commandv("no-osd", "add", "volume", tostring(-volume_skin.get().step))
+end, {repeatable = true})
+
 --
 -- Hybrid: menus (uosc behaviour, ModernZ look)
 --
@@ -5826,15 +5912,20 @@ local base_look, applied_look = {}, nil
 
 local function remember_base_look()
     for _, key in ipairs(LOOK_OPTS) do base_look[key] = user_opts[key] end
+    -- volume-max of mpv.conf, before any skin changed it
+    base_look.volume_max = base_look.volume_max or mp.get_property_number("volume-max")
     applied_look = nil
 end
 
 apply_skin_look = function ()
     local skin = (user_opts.layout == "skin" and not state.is_image) and get_skin() or {}
     local key = table.concat({skin.theme or "", skin.seekbar_height or "",
-                              skin.handle_color or "", skin.handle_border_color or ""}, "|")
+                              skin.handle_color or "", skin.handle_border_color or "", skin.volume_max or ""}, "|")
     if key == applied_look then return end
     applied_look = key
+    -- the top of the volume scale: the skin's one or mpv.conf's
+    local vmax = skin.volume_max or base_look.volume_max
+    if vmax and vmax ~= mp.get_property_number("volume-max") then mp.set_property_number("volume-max", vmax) end
     for _, k in ipairs(LOOK_OPTS) do user_opts[k] = base_look[k] end
     if skin.theme and THEMES[skin.theme] then
         user_opts.theme = skin.theme

@@ -731,7 +731,7 @@ end
 
 -- properties menu -------------------------------------------------------------------------
 
-local look_menu, skin_choice, look_color, create_menu, open_properties
+local look_menu, skin_choice, look_color, create_menu, open_properties, volume_scale_items
 
 -- what a button can do; command nil = what the element does by itself
 local ACTIONS = {
@@ -1078,8 +1078,11 @@ local function properties(index)
         local function add(entry) items[#items + 1] = entry end
 
         if item.id == "volume" then
-            -- the volume widget: only its place and size (its look comes from hybrid.conf)
-            add({title = "Ширина — толщина регулятора, высота — его длина", icon = "info", action = function () return "keep" end})
+            -- the volume widget: its place and size here, its scale belongs to the whole skin
+            volume_scale_items(add, function () open_properties(index) end)
+            local hint = ed.skin.volume_dir == "horizontal" and "Ширина — длина регулятора, высота — его толщина"
+                or "Ширина — толщина регулятора, высота — его длина"
+            add({title = hint, icon = "info", muted = true, action = function () return "keep" end})
         elseif is_zone(item) then
             -- a zone covers a lot of the window: objects can be created on it from here
             if ed.right_at then
@@ -1416,13 +1419,20 @@ local LOOK = {
                 {"Белая", "#FFFFFF"}},
     handle_color = {{"Как в теме", nil}},
     handle_border_color = {{"Как в теме", nil}, {"Без обводки", "none"}},
+    -- the volume scale
+    volume_max = {{"Как в mpv.conf", nil}, {"100%", 100}, {"130%", 130}, {"150%", 150}, {"200%", 200}},
+    volume_step = {{"Как в настройках", nil}, {"1%", 1}, {"2%", 2}, {"5%", 5}, {"10%", 10}},
+    volume_number = {{"Показывать", nil}, {"Скрыть", false}},
+    volume_color = {{"Как в теме", nil}},
+    volume_dir = {{"Вертикально", nil}, {"Горизонтально", "horizontal"}},
 }
 for _, c in ipairs(COLORS) do
     table.insert(LOOK.handle_color, c)
     table.insert(LOOK.handle_border_color, c)
+    table.insert(LOOK.volume_color, c)
 end
 -- look fields that also take "Свой цвет…"
-local LOOK_COLOR_KEYS = {bg_color = true, handle_color = true, handle_border_color = true}
+local LOOK_COLOR_KEYS = {bg_color = true, handle_color = true, handle_border_color = true, volume_color = true}
 
 skin_choice = function (title, key)
     return function ()
@@ -1453,6 +1463,57 @@ look_color = function (title, key, back)
     end
 end
 
+-- the volume scale (skin fields volume_*): in the properties of the volume widget and in "Оформление"
+volume_scale_items = function (add, back)
+    local function choice(title, icon, key)
+        add({title = title, icon = icon, hint = find_name(LOOK[key], ed.skin[key], tostring(ed.skin[key])),
+             submenu = skin_choice(title, key)})
+    end
+    choice("Максимум шкалы", "volume_up", "volume_max")
+    choice("Шаг колёсика и стрелок", "stairs", "volume_step")
+    choice("Цифра громкости", "pin", "volume_number")
+    add({title = "Цвет заливки", icon = "format_color_fill",
+         hint = find_name(LOOK.volume_color, ed.skin.volume_color, ed.skin.volume_color),
+         action = look_color("Цвет заливки громкости", "volume_color", back)})
+    add({title = "Положение", icon = "screen_rotation", hint = find_name(LOOK.volume_dir, ed.skin.volume_dir),
+         submenu = function ()
+             local items = {}
+             for _, entry in ipairs(LOOK.volume_dir) do
+                 items[#items + 1] = {title = entry[1], active = ed.skin.volume_dir == entry[2], action = function ()
+                     if ed.skin.volume_dir == entry[2] then return "keep" end
+                     push_undo()
+                     ed.skin.volume_dir = entry[2]
+                     -- turn the widget's box: same right edge (or left), same middle height
+                     local volume
+                     for _, it in ipairs(ed.skin.items) do
+                         if it.id == "volume" and it.w and it.h then
+                             local w, h = it.h, it.w
+                             if it.anchor ~= "left" then it.x = it.x + it.w - w end
+                             it.bottom = math.max(0, math.floor(it.bottom + (it.h - h) / 2))
+                             it.w, it.h = w, h
+                             volume = it
+                         end
+                     end
+                     -- its hover zone grows to cover the turned widget (with 20 px around)
+                     for _, z in ipairs(ed.skin.items) do
+                         if volume and z.id == "zone_volume" and z.w and z.anchor == volume.anchor then
+                             local x1 = math.min(z.x, volume.x - 20)
+                             local x2 = math.max(z.x + z.w, volume.x + volume.w + 20)
+                             if z.anchor == "right" then x2 = math.min(x2, 0) else x1 = math.max(x1, 0) end
+                             z.x, z.w = x1, x2 - x1
+                             local b1 = math.max(0, math.min(z.bottom, volume.bottom - 20))
+                             local b2 = math.max(z.bottom + z.h, volume.bottom + volume.h + 20)
+                             z.bottom, z.h = b1, b2 - b1
+                         end
+                     end
+                     relayout()
+                     return "keep"
+                 end}
+             end
+             return {title = "Положение регулятора", items = items}
+         end})
+end
+
 look_menu = function ()
     return function ()
         local items = {}
@@ -1473,6 +1534,12 @@ look_menu = function ()
         add("Свечение полосы", "flare", "glow")
         add("Цвет кружка на полосе", "radio_button_checked", "handle_color")
         add("Обводка кружка", "trip_origin", "handle_border_color")
+        items[#items].separator = true
+        items[#items + 1] = {title = "Шкала громкости", icon = "volume_up", submenu = function ()
+            local list = {}
+            volume_scale_items(function (entry) list[#list + 1] = entry end, M.open_look)
+            return {title = "Шкала громкости", items = list}
+        end}
         return {title = "Оформление скина", items = items}
     end
 end
