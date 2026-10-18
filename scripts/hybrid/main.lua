@@ -4878,7 +4878,12 @@ tick = function()
             ass:pos(display_w / 2, icon_y + 65)
             ass:an(8)
             ass:append("{\\fs24\\1c&HFFFFFF&}" .. locale.idle)
-            set_osd(state.logo_osd, display_w, display_h, ass.text, -1000)
+            -- the logo and "drop a file here" would show through the open menu
+            if state.menu_open then
+                render_wipe(state.logo_osd)
+            else
+                set_osd(state.logo_osd, display_w, display_h, ass.text, -1000)
+            end
         end
 
         if state.osc_visible then

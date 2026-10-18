@@ -83,6 +83,12 @@ local T = {
     url_opening = "Открываю: ",
     url_queued = "Добавлено в плейлист: ",
     url_none = "В буфере обмена нет ссылки или пути к файлу",
+    tile_file = "Файл",
+    tile_link = "Ссылка",
+    now_playing = "СЕЙЧАС ИГРАЕТ",
+    more = "Ещё",
+    more_hint = "повтор, экран, звук…",
+    editor_short = "Редактор",
 }
 
 local LANGS = {
@@ -670,52 +676,87 @@ local function main_menu()
     local pl_count = prop("playlist-count", 0)
     local ch_count = real_chapter_count()
     local path = absolute_path(mp.get_property("path"))
+    local playing = prop("path") ~= nil
 
-    add({title = T.open_file, icon = "folder_open", hint = "Ctrl+O", submenu = browser(start_dir(), "media")})
-    add({title = T.open_url, icon = "link", hint = "Ctrl+V", action = function () mp.add_timeout(0.05, ask_link) end})
-    add({title = T.history, icon = "history", hint = "Ctrl+H", submenu = history})
-    add({title = T.playlist, icon = "queue_music",
-         hint = pl_count > 0 and (prop("playlist-pos-1", 0) .. "/" .. pl_count) or nil, submenu = playlist})
-    if ch_count > 0 then
-        add({title = T.chapters, icon = "bookmarks", hint = tostring(ch_count), submenu = chapters})
+    -- "remote control" layout: quick tiles, then only what matters for this video,
+    -- the rare things under "Ещё" (search still finds them), the shell and quit at the bottom
+
+    -- quick tiles: open / link / recent / screenshot
+    local tiles = {
+        {title = T.tile_file, tip = T.open_file .. "  ·  Ctrl+O", icon = "folder_open",
+         submenu = browser(start_dir(), "media")},
+        {title = T.tile_link, tip = T.open_url .. "  ·  Ctrl+V", icon = "link",
+         action = function () mp.add_timeout(0.05, ask_link) end},
+        {title = T.history, tip = T.history .. "  ·  Ctrl+H", icon = "history", submenu = history},
+    }
+    if playing then
+        tiles[#tiles + 1] = {title = T.screenshot, tip = T.screenshot .. "  ·  S", icon = "photo_camera",
+            action = function () mp.add_timeout(0.15, function () mp.commandv("osd-msg", "screenshot") end) end}
     end
-    add({title = T.subtitles, icon = "subtitles", hint = current.sub or T.off_hint,
-         submenu = tracks("sub", T.subtitles, "sid")})
-    if track_counts.audio > 0 then
-        add({title = T.audio, icon = "audiotrack", hint = current.audio, submenu = tracks("audio", T.audio, "aid")})
+    add({chips = tiles})
+
+    -- what is playing now
+    if playing then
+        add({header = true, title = T.now_playing})
+        if pl_count > 1 then
+            add({title = T.playlist, icon = "queue_music", hint = prop("playlist-pos-1", 0) .. "/" .. pl_count,
+                 submenu = playlist})
+        end
+        if ch_count > 0 then
+            add({title = T.chapters, icon = "bookmarks", hint = tostring(ch_count), submenu = chapters})
+        end
+        add({title = T.subtitles, icon = "subtitles", hint = current.sub or T.off_hint,
+             submenu = tracks("sub", T.subtitles, "sid")})
+        if track_counts.audio > 0 then
+            add({title = T.audio, icon = "audiotrack", hint = current.audio, submenu = tracks("audio", T.audio, "aid")})
+        end
+        if track_counts.video > 1 then
+            add({title = T.video, icon = "movie", hint = current.video, submenu = tracks("video", T.video, "vid")})
+        end
+        local quality = quality_data()
+        if quality.kind then
+            add({title = T.quality, icon = "high_quality", hint = quality_title(quality), submenu = qualities})
+        end
+        add({title = T.speed, icon = "speed", hint = format_speed(prop("speed", 1)), submenu = speeds})
     end
-    if track_counts.video > 1 then
-        add({title = T.video, icon = "movie", hint = current.video, submenu = tracks("video", T.video, "vid")})
-    end
-    local quality = quality_data()
-    if quality.kind then
-        add({title = T.quality, icon = "high_quality", hint = quality_title(quality), submenu = qualities})
-    end
-    add({title = T.speed, icon = "speed", hint = format_speed(prop("speed", 1)), submenu = speeds})
-    add({title = T.aspect, icon = "aspect_ratio", submenu = aspects})
+
+    -- the rare things: a submenu, and the same items hidden in this level so that search finds them
     local loop_hints = {off = T.loop_off_hint, file = T.loop_file_hint, playlist = T.loop_playlist_hint}
-    add({title = T.loop, icon = "repeat", hint = loop_hints[loop_state()], submenu = loops})
-    add({title = T.audio_device, icon = "speaker", submenu = audio_devices, separator = true})
+    local more = {}
+    if playing then
+        more[#more + 1] = {title = T.aspect, icon = "aspect_ratio", submenu = aspects}
+        more[#more + 1] = {title = T.loop, icon = "repeat", hint = loop_hints[loop_state()], submenu = loops}
+    end
+    more[#more + 1] = {title = T.audio_device, icon = "speaker", submenu = audio_devices}
+    if path then
+        more[#more + 1] = {title = T.show_in_folder, icon = "folder", action = function ()
+            mp.commandv("run", "explorer", "/select," .. path)
+        end}
+    end
+    more[#more + 1] = {title = T.stats, icon = "query_stats", hint = "I", action = function ()
+        mp.command("script-binding stats/display-stats-toggle")
+    end}
+    -- what "Ещё" holds, as its hint: "повтор, звук, …"
+    add({title = T.more, icon = "more_horiz", hint = playing and T.more_hint or nil, separator = true,
+         submenu = function () return {title = T.more, items = more} end})
+    for _, item in ipairs(more) do
+        local copy = {hidden = true}
+        for k, v in pairs(item) do copy[k] = v end
+        add(copy)
+    end
+
+    -- the shell: skins and the editor side by side
+    local shell = {}
     if hooks.skin_current then
         local layout, _, skin_name = hooks.skin_current()
-        add({title = T.skins, icon = "style", hint = layout == "skin" and skin_name or T.off_hint, submenu = skins_menu})
+        shell[#shell + 1] = {title = T.skins, tip = T.skins .. ": " .. (layout == "skin" and skin_name or T.off_hint),
+            icon = "style", submenu = skins_menu}
     end
-    add({title = T.editor, icon = "dashboard_customize", hint = "Ctrl+E", action = function ()
-        mp.command("script-binding hybrid/editor")
-    end})
-    add({title = T.screenshot, icon = "photo_camera", hint = "S", action = function ()
-        mp.add_timeout(0.15, function () mp.commandv("osd-msg", "screenshot") end)
-    end})
-    if path then
-        add({title = T.show_in_folder, icon = "folder", action = function ()
-            mp.commandv("run", "explorer", "/select," .. path)
-        end})
-    end
-    add({title = T.stats, icon = "query_stats", hint = "I", action = function ()
-        mp.command("script-binding stats/display-stats-toggle")
-    end})
-    add({title = T.quit, icon = "logout", hint = "Q", action = function () mp.command("quit") end})
-    return {title = T.menu, items = items}
+    shell[#shell + 1] = {title = T.editor_short, tip = T.editor .. "  ·  Ctrl+E", icon = "dashboard_customize",
+        action = function () mp.command("script-binding hybrid/editor") end}
+    add({chips = shell, compact = true})
+    add({title = T.quit, icon = "logout", hint = "Q", muted = true, action = function () mp.command("quit") end})
+    return {title = T.menu, items = items, selected = 1}
 end
 
 -- public ----------------------------------------------------------------------------------
