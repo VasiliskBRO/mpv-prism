@@ -1447,6 +1447,9 @@ local LOOK = {
                 {"Белая", "#FFFFFF"}},
     handle_color = {{"Как в теме", nil}},
     handle_border_color = {{"Как в теме", nil}, {"Без обводки", "none"}},
+    -- chameleon: the accent follows the video
+    accent_mode = {{"Авто (своя тема скина или хамелеон)", nil}, {"Из видео — хамелеон", "video"}, {"Из темы", "theme"}},
+    chameleon_strength = {{"Мягко", nil}, {"Ярко, как в кадре", "vivid"}},
     -- the volume scale
     volume_max = {{"Как в mpv.conf", nil}, {"100%", 100}, {"130%", 130}, {"150%", 150}, {"200%", 200}},
     volume_step = {{"Как в настройках", nil}, {"1%", 1}, {"2%", 2}, {"5%", 5}, {"10%", 10}},
@@ -1551,6 +1554,8 @@ look_menu = function ()
                                  action = LOOK_COLOR_KEYS[key] and look_color(title, key, M.open_look) or nil}
         end
         add("Цвет (тема)", "palette", "theme")
+        add("Цвет акцента", "colorize", "accent_mode")
+        if ed.skin.accent_mode ~= "theme" then add("Хамелеон", "auto_awesome", "chameleon_strength") end
         add("Подложка", "layers", "background")
         if ed.skin.background == "capsule" then
             add("Отступ капсулы от краёв", "padding", "bg_inset")

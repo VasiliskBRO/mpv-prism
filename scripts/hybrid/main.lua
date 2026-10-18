@@ -168,6 +168,7 @@ local user_opts = {
     title_color = "#FFFFFF",               -- color of the title
     cache_info_color = "#FFFFFF",          -- color of the cache information
     seekbar_cache_color = "#B1B1B1",       -- color of the cache ranges on the seekbar
+    chameleon = true,                      -- the accent follows the colors of the video (a skin may decide itself)
     seekbarfg_color = "#FF8232",           -- color of the seekbar progress
     seekbarbg_color = "#999999",           -- color of the remaining seekbar
     seek_handle_color = "#C96508",         -- color of the seekbar handle
@@ -5948,8 +5949,14 @@ end
 
 apply_skin_look = function ()
     local skin = (user_opts.layout == "skin" and not state.is_image) and get_skin() or {}
-    local key = table.concat({skin.theme or "", skin.seekbar_height or "",
-                              skin.handle_color or "", skin.handle_border_color or "", skin.volume_max or ""}, "|")
+    -- chameleon (chameleon.lua): the accent follows the video. The skin decides (accent_mode), a skin with its
+    -- own theme keeps it, otherwise hybrid.conf's chameleon=yes/no
+    local chameleon = require "chameleon"
+    local mode = skin.accent_mode or (skin.theme and "theme") or (user_opts.chameleon and "video" or "theme")
+    chameleon.set_enabled(mode == "video" and not state.is_image, skin.chameleon_strength)
+    local tint = chameleon.color()
+    local key = table.concat({skin.theme or "", skin.seekbar_height or "", skin.handle_color or "",
+                              skin.handle_border_color or "", skin.volume_max or "", tint or ""}, "|")
     if key == applied_look then return end
     applied_look = key
     -- the top of the volume scale: the skin's one or mpv.conf's
@@ -5961,6 +5968,14 @@ apply_skin_look = function ()
         apply_theme()
     end
     if skin.seekbar_height then user_opts.seekbar_height = skin.seekbar_height end
+    -- the color of the video over the theme's accent (own handle colors of the skin still win)
+    if tint then
+        user_opts.seekbarfg_color = tint
+        user_opts.hover_effect_color = tint
+        user_opts.nibble_color = tint
+        user_opts.seek_handle_color = chameleon.shade(tint, 0.7)
+        user_opts.seek_handle_border_color = chameleon.shade(tint, 1.25)
+    end
     -- the seekbar handle may have its own colors, over the theme
     if skin.handle_color then user_opts.seek_handle_color = skin.handle_color end
     if skin.handle_border_color then
@@ -5969,6 +5984,20 @@ apply_skin_look = function ()
     set_osc_styles()
     menu.setup({accent = user_opts.seekbarfg_color, font = user_opts.font})
 end
+
+-- a new chameleon color: the look again, the bar rebuilt with it; the start of a change is the theme's accent
+require("chameleon").setup({
+    on_color = function ()
+        applied_look = nil
+        apply_skin_look()
+        request_init()
+    end,
+    base = function ()
+        local skin = (user_opts.layout == "skin") and get_skin() or {}
+        local theme = THEMES[skin.theme or ""] or THEMES[base_look.theme or ""]
+        return theme and theme[1] or base_look.seekbarfg_color
+    end,
+})
 
 local function validate_user_opts()
     apply_theme()

@@ -18,6 +18,9 @@
 --     volume_number  false: no value next to the track
 --     volume_color   fill of the track "#RRGGBB", default: the theme color
 --     volume_dir     "horizontal": the widget lies (its item's h is the thickness), default: upright
+--   accent_mode    "video" (chameleon: the accent follows the video) | "theme"; default: a skin with its own
+--                  theme keeps it, otherwise chameleon=yes/no of hybrid.conf
+--   chameleon_strength  "vivid": the colors of the video as they are; default: soft
 --   zones_edited - true: the hover zones are items of the skin (kind "zone"), the standard ones
 --              included (zone_bottom, zone_top, zone_volume; a deleted one does not work);
 --              otherwise the standard zones are computed and there are no own zones
@@ -178,6 +181,8 @@ local function normalize(skin)
     if skin.volume_number ~= false then skin.volume_number = nil end -- only "false" is kept
     if type(skin.volume_color) ~= "string" or not skin.volume_color:match("^#%x%x%x%x%x%x$") then skin.volume_color = nil end
     skin.volume_dir = skin.volume_dir == "horizontal" and "horizontal" or nil
+    skin.accent_mode = (skin.accent_mode == "video" or skin.accent_mode == "theme") and skin.accent_mode or nil
+    skin.chameleon_strength = skin.chameleon_strength == "vivid" and "vivid" or nil
     -- the skin this one was copied from: "Как по умолчанию" goes back to its original
     skin.based_on = type(skin.based_on) == "string" and skin.based_on:match("^[%w_%-]+$") and skin.based_on or nil
     return skin
@@ -215,7 +220,8 @@ local KEY_ORDER = {"id", "custom", "anchor", "x", "w", "r", "bottom", "h", "prio
                    "size", "color", "hover", "alpha", "font", "bg", "bg_color", "bg_alpha", "radius", "pad", "show_in", "tooltip", "actions"}
 local LOOK_KEYS = {"theme", "seekbar_height", "background", "bg_inset", "bg_radius", "bg_color", "bg_alpha", "glow",
                    "handle_color", "handle_border_color",
-                   "volume_max", "volume_step", "volume_number", "volume_color", "volume_dir"}
+                   "volume_max", "volume_step", "volume_number", "volume_color", "volume_dir",
+                   "accent_mode", "chameleon_strength"}
 M.LOOK_KEYS = LOOK_KEYS
 
 local function json_value(value)
