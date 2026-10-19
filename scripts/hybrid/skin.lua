@@ -21,6 +21,12 @@
 --   accent_mode    "video" (chameleon: the accent follows the video) | "theme"; default: a skin with its own
 --                  theme keeps it, otherwise chameleon=yes/no of hybrid.conf
 --   chameleon_strength  "vivid": the colors of the video as they are; default: soft
+--   pause_indicator  "prism" | "flash" | "static" | "no": the pause of this skin; default: hybrid.conf
+--   start_screen   "prism" | "mpv" | "no": the screen when nothing plays; start_cards 0..6 (cards of the last
+--                  videos), start_frames false: cards without frames; default: hybrid.conf
+--   pet            the skin's own pet {enabled, place, size, quiet, images} (pet.lua); default: the pet of
+--                  all skins (hybrid-pet.json)
+--   menu           the menu of the right click with this skin (a file of ~~/menus); default: menus/settings.json
 --   zones_edited - true: the hover zones are items of the skin (kind "zone"), the standard ones
 --              included (zone_bottom, zone_top, zone_volume; a deleted one does not work);
 --              otherwise the standard zones are computed and there are no own zones
@@ -51,8 +57,8 @@
 --             hover zones (id "zone_*"): {kind = "zone", name = "..."}
 --             plates (id "custom_N"): {kind = "plate"} - a rounded plate under other items;
 --             color, alpha and radius (corner radius, nil = round ends) set its look
---             the mascot (id "custom_*"): {kind = "mascot", images = {sit, peek, sleep, wave = "file:..."},
---             quiet = true} - lives on the bar (mascot.lua); without images it is the built-in "Призмочка"
+--             an old mascot item {kind = "mascot"} is dropped: the pet lives in every skin (pet.lua),
+--             its images / quiet go to skin.old_mascot for the move
 --   bg, bg_color, bg_alpha  bg = "circle": a round plate behind a button; font - font of a text item
 --   based_on  (skin level) the skin this one was copied from, for "Как по умолчанию";
 --             shipped originals live in skins/defaults/<name>.json
@@ -141,14 +147,10 @@ local function normalize(skin)
                     text = type(item.custom.text) == "string" and item.custom.text or nil,
                     name = type(item.custom.name) == "string" and item.custom.name or nil}
             elseif kind == "mascot" then
-                -- the mascot (mascot.lua): own pictures per state, quiet = not shown while playing
-                local images = {}
-                for _, st in ipairs({"sit", "peek", "sleep", "wave"}) do
-                    local v = type(item.custom.images) == "table" and item.custom.images[st]
-                    if type(v) == "string" and v ~= "" then images[st] = v end
-                end
-                item.custom = {kind = "mascot", images = next(images) and images or nil,
-                               quiet = item.custom.quiet == true or nil}
+                -- the old mascot item of a skin: the pet (pet.lua) lives in every skin now; its pictures and
+                -- "quiet" are kept for the move to the pet's settings
+                skin.old_mascot = {images = type(item.custom.images) == "table" and item.custom.images or nil,
+                                   quiet = item.custom.quiet == true}
             else
                 item.custom = nil
             end
@@ -166,7 +168,7 @@ local function normalize(skin)
             else
                 item.w = math.max(4, tonumber(item.w) or 24)
             end
-            items[#items + 1] = item
+            if kind ~= "mascot" then items[#items + 1] = item end
         end
     end
     skin.items = items
@@ -194,6 +196,13 @@ local function normalize(skin)
     skin.volume_dir = skin.volume_dir == "horizontal" and "horizontal" or nil
     skin.accent_mode = (skin.accent_mode == "video" or skin.accent_mode == "theme") and skin.accent_mode or nil
     skin.chameleon_strength = skin.chameleon_strength == "vivid" and "vivid" or nil
+    skin.pause_indicator = ({prism = 1, flash = 1, static = 1, no = 1})[skin.pause_indicator] and skin.pause_indicator or nil
+    skin.start_screen = ({prism = 1, mpv = 1, no = 1})[skin.start_screen] and skin.start_screen or nil
+    local cards = tonumber(skin.start_cards)
+    skin.start_cards = cards and math.max(0, math.min(6, math.floor(cards))) or nil
+    if skin.start_frames ~= false then skin.start_frames = nil end -- only "false" is kept
+    skin.pet = require("pet").normalize(skin.pet)
+    skin.menu = type(skin.menu) == "string" and skin.menu:match("^[%w_%-]+$") and skin.menu or nil
     -- the skin this one was copied from: "Как по умолчанию" goes back to its original
     skin.based_on = type(skin.based_on) == "string" and skin.based_on:match("^[%w_%-]+$") and skin.based_on or nil
     return skin
@@ -232,7 +241,7 @@ local KEY_ORDER = {"id", "custom", "anchor", "x", "w", "r", "bottom", "h", "prio
 local LOOK_KEYS = {"theme", "seekbar_height", "background", "bg_inset", "bg_radius", "bg_color", "bg_alpha", "glow",
                    "handle_color", "handle_border_color",
                    "volume_max", "volume_step", "volume_number", "volume_color", "volume_dir",
-                   "accent_mode", "chameleon_strength"}
+                   "accent_mode", "chameleon_strength", "pause_indicator", "start_screen", "start_cards", "start_frames", "pet", "menu"}
 M.LOOK_KEYS = LOOK_KEYS
 
 local function json_value(value)

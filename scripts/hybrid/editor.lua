@@ -55,21 +55,7 @@ end
 -- the "Мои иконки" part of an icon list: own icons from ~~/icons (icons.lua), then a caption for the built-in ones;
 -- pick(name) is the action of an icon
 local function own_icon_items(list, current, pick, no_builtin)
-    local icons = require "icons"
-    list[#list + 1] = {header = true, title = "МОИ ИКОНКИ"}
-    for _, own in ipairs(icons.list()) do
-        list[#list + 1] = {title = own.title, icon = own.name, hint = own.kind:upper(), active = own.name == current,
-                           action = function () return pick(own.name) end}
-    end
-    list[#list + 1] = {title = "Открыть папку с иконками", icon = "folder_open", hint = "кидай туда .svg или .png",
-        action = function ()
-            icons.make_dir(icons.dir())
-            mp.commandv("run", "explorer", icons.dir())
-            return "stay"
-        end}
-    list[#list + 1] = {title = "Обновить список", icon = "refresh", separator = not no_builtin,
-                       action = function () icons.forget() return "keep" end}
-    if not no_builtin then list[#list + 1] = {header = true, title = "ВСТРОЕННЫЕ"} end
+    require("icons").picker_items(list, current, pick, no_builtin)
 end
 
 -- ready-made buttons: title, icon, left click, tooltip
@@ -106,7 +92,6 @@ local BUILTIN = {
 local function item_name(item)
     if item.custom and item.custom.kind == "zone" then return "Зона «" .. (item.custom.name or item.id) .. "»" end
     if item.custom and item.custom.kind == "plate" then return "Плашка" end
-    if item.custom and item.custom.kind == "mascot" then return "Маскот" end
     if item.custom then
         if item.custom.kind == "text" then return "Надпись «" .. (item.custom.text or "") .. "»" end
         return item.tooltip or ("Кнопка «" .. icon_name(item.custom.icon) .. "»")
@@ -1099,40 +1084,7 @@ local function properties(index)
         local items = {}
         local function add(entry) items[#items + 1] = entry end
 
-        if item.custom and item.custom.kind == "mascot" then
-            -- the mascot (mascot.lua): a picture per state, the built-in "Призмочка" by default
-            local states = {{"sit", "Сидит на панели"}, {"peek", "На паузе — выглядывает"}, {"sleep", "Спит — ничего не играет"},
-                            {"wave", "В конце видео — машет"}}
-            for _, st in ipairs(states) do
-                local image = item.custom.images and item.custom.images[st[1]]
-                add({title = st[2], icon = image or "pets", hint = image and icon_name(image) or "Призмочка",
-                     submenu = function ()
-                         local list = {{title = "Призмочка (встроенная)", icon = "change_history",
-                             active = not (ed.skin.items[index].custom.images or {})[st[1]], action = function ()
-                                 change(index, function (it)
-                                     if it.custom.images then it.custom.images[st[1]] = nil end
-                                     if it.custom.images and not next(it.custom.images) then it.custom.images = nil end
-                                 end)
-                                 return "keep"
-                             end}}
-                         own_icon_items(list, (ed.skin.items[index].custom.images or {})[st[1]], function (name)
-                             change(index, function (it)
-                                 it.custom.images = it.custom.images or {}
-                                 it.custom.images[st[1]] = name
-                             end)
-                             return "keep"
-                         end, true)
-                         return {title = st[2], items = list}
-                     end})
-            end
-            add({title = "Во время просмотра", icon = "visibility", hint = item.custom.quiet and "прячется" or "сидит на панели",
-                 action = function ()
-                     change(index, function (it) it.custom.quiet = not it.custom.quiet or nil end)
-                     return "keep"
-                 end})
-            add({title = "Своя картинка: кинь PNG или SVG в «Мои иконки»", icon = "info", muted = true,
-                 action = function () return "keep" end})
-        elseif item.id == "volume" then
+        if item.id == "volume" then
             -- the volume widget: its place and size here, its scale belongs to the whole skin
             volume_scale_items(add, function () open_properties(index) end)
             local hint = ed.skin.volume_dir == "horizontal" and "Ширина — длина регулятора, высота — его толщина"
@@ -1405,14 +1357,6 @@ create_menu = function (at)
                 M.render()
             end)
         end}
-        local has_mascot = false
-        for _, it in ipairs(ed.skin.items) do has_mascot = has_mascot or (it.custom and it.custom.kind == "mascot") end
-        if not has_mascot then
-            items[#items + 1] = {title = "Маскот «Призмочка»", icon = "pets", action = function ()
-                add_item({id = new_custom_id(), custom = {kind = "mascot"}, w = 60, h = 60}, at)
-                toast("Маскот живёт на панели: на паузе выглядывает, без видео спит, в конце машет. Картинки — в свойствах", 7)
-            end}
-        end
         items[#items + 1] = {title = "Плашка (подложка под кнопки)", icon = "rectangle", action = function ()
             add_item({id = new_custom_id(), custom = {kind = "plate"}, w = 240, h = 56}, at)
             toast("Плашка создана: растяни её под группу кнопок; цвет и скругление — в свойствах", 6)
@@ -1492,6 +1436,13 @@ local LOOK = {
     -- chameleon: the accent follows the video
     accent_mode = {{"Авто (своя тема скина или хамелеон)", nil}, {"Из видео — хамелеон", "video"}, {"Из темы", "theme"}},
     chameleon_strength = {{"Мягко", nil}, {"Ярко, как в кадре", "vivid"}},
+    -- the pause in the middle of the video
+    pause_indicator = {{"Как в настройках", nil}, {"Призма — луч и радуга", "prism"}, {"Вспышка", "flash"},
+                       {"Висит, пока пауза", "static"}, {"Нет", "no"}},
+    -- the screen when nothing plays
+    start_screen = {{"Как в настройках", nil}, {"Prism — последние видео", "prism"}, {"Логотип mpv", "mpv"}, {"Пустой", "no"}},
+    start_cards = {{"Как в настройках", nil}, {"Без карточек", 0}, {"2", 2}, {"3", 3}, {"4", 4}, {"6", 6}},
+    start_frames = {{"Показывать", nil}, {"Без кадров", false}},
     -- the volume scale
     volume_max = {{"Как в mpv.conf", nil}, {"100%", 100}, {"130%", 130}, {"150%", 150}, {"200%", 200}},
     volume_step = {{"Как в настройках", nil}, {"1%", 1}, {"2%", 2}, {"5%", 5}, {"10%", 10}},
@@ -1587,36 +1538,90 @@ volume_scale_items = function (add, back)
          end})
 end
 
+-- "Оформление" of a skin: folders, each with a short summary of what is chosen inside
+local PAUSE_SHORT = {prism = "призма", flash = "вспышка", static = "висит", no = "нет"}
+local START_SHORT = {prism = "Prism", mpv = "mpv", no = "пусто"}
+
 look_menu = function ()
     return function ()
-        local items = {}
-        local function add(title, icon, key)
-            items[#items + 1] = {title = title, icon = icon, hint = find_name(LOOK[key], ed.skin[key], tostring(ed.skin[key])),
-                                 submenu = not LOOK_COLOR_KEYS[key] and skin_choice(title, key) or nil,
-                                 action = LOOK_COLOR_KEYS[key] and look_color(title, key, M.open_look) or nil}
+        local function folder(title, icon, hint, fill)
+            return {title = title, icon = icon, hint = hint, submenu = function ()
+                local list = {}
+                local function add(name, sub_icon, key)
+                    list[#list + 1] = {title = name, icon = sub_icon,
+                        hint = find_name(LOOK[key], ed.skin[key], tostring(ed.skin[key])),
+                        submenu = not LOOK_COLOR_KEYS[key] and skin_choice(name, key) or nil,
+                        action = LOOK_COLOR_KEYS[key] and look_color(name, key, M.open_look) or nil}
+                end
+                fill(add, list)
+                return {title = title, items = list}
+            end}
         end
-        add("Цвет (тема)", "palette", "theme")
-        add("Цвет акцента", "colorize", "accent_mode")
-        if ed.skin.accent_mode ~= "theme" then add("Хамелеон", "auto_awesome", "chameleon_strength") end
-        add("Подложка", "layers", "background")
-        if ed.skin.background == "capsule" then
-            add("Отступ капсулы от краёв", "padding", "bg_inset")
-            add("Скругление капсулы", "rounded_corner", "bg_radius")
-            add("Плотность капсулы", "opacity", "bg_alpha")
-            add("Цвет капсулы", "format_color_fill", "bg_color")
-        end
-        add("Толщина полосы перемотки", "line_weight", "seekbar_height")
-        add("Свечение полосы", "flare", "glow")
-        add("Цвет кружка на полосе", "radio_button_checked", "handle_color")
-        add("Обводка кружка", "trip_origin", "handle_border_color")
-        items[#items].separator = true
-        items[#items + 1] = {title = "Шкала громкости", icon = "volume_up", submenu = function ()
-            local list = {}
-            volume_scale_items(function (entry) list[#list + 1] = entry end, M.open_look)
-            return {title = "Шкала громкости", items = list}
-        end}
+        local s = ed.skin
+        local pet = require("pet")
+        local items = {
+            folder("Цвета", "palette", (find_name(LOOK.theme, s.theme)) .. (s.accent_mode == "theme" and "" or " · хамелеон"),
+                function (add)
+                    add("Цвет (тема)", "palette", "theme")
+                    add("Цвет акцента", "colorize", "accent_mode")
+                    if s.accent_mode ~= "theme" then add("Хамелеон", "auto_awesome", "chameleon_strength") end
+                    add("Цвет кружка на полосе", "radio_button_checked", "handle_color")
+                    add("Обводка кружка", "trip_origin", "handle_border_color")
+                end),
+            folder("Панель", "layers", find_name(LOOK.background, s.background), function (add)
+                add("Подложка", "layers", "background")
+                if s.background == "capsule" then
+                    add("Отступ капсулы от краёв", "padding", "bg_inset")
+                    add("Скругление капсулы", "rounded_corner", "bg_radius")
+                    add("Плотность капсулы", "opacity", "bg_alpha")
+                    add("Цвет капсулы", "format_color_fill", "bg_color")
+                end
+                add("Толщина полосы перемотки", "line_weight", "seekbar_height")
+                add("Свечение полосы", "flare", "glow")
+            end),
+            folder("Громкость", "volume_up", find_name(LOOK.volume_max, s.volume_max), function (_, list)
+                volume_scale_items(function (entry) list[#list + 1] = entry end, M.open_look)
+            end),
+            folder("Пауза и старт", "pause_circle",
+                (PAUSE_SHORT[s.pause_indicator] or "общая") .. " · " .. (START_SHORT[s.start_screen] or "общий"),
+                function (add)
+                    add("Значок паузы", "pause_circle", "pause_indicator")
+                    add("Стартовый экран", "home", "start_screen")
+                    if s.start_screen ~= "mpv" and s.start_screen ~= "no" then
+                        add("Карточки последних видео", "view_carousel", "start_cards")
+                        add("Кадры на карточках", "image", "start_frames")
+                    end
+                end),
+            -- the skin's own pet or the pet of all skins (pet.lua)
+            {title = "Питомец", icon = "pets", submenu = pet.menu(true),
+             hint = (pet.own() and "свой" or "общий") .. " · " .. (pet.get().enabled and "вкл" or "выкл")},
+            -- the menu of the right click with this skin
+            {title = "Меню по правому клику", icon = "menu", hint = s.menu or "общее", submenu = function ()
+                local list = {{title = "Как в настройках меню", active = s.menu == nil, action = function ()
+                    push_undo()
+                    ed.skin.menu = nil
+                    return "keep"
+                end}}
+                for _, m in ipairs(require("menukit").list()) do
+                    list[#list + 1] = {title = m.name, hint = m.file, active = ed.skin.menu == m.file, action = function ()
+                        push_undo()
+                        ed.skin.menu = m.file
+                        return "keep"
+                    end}
+                end
+                return {title = "Меню по правому клику", items = list}
+            end},
+        }
         return {title = "Оформление скина", items = items}
     end
+end
+
+-- a change of the skin made from outside the editor's own menus (the pet's menu): an undo step, then the bar
+function M.change_skin(fn)
+    if not ed then return fn() end
+    push_undo()
+    fn()
+    relayout()
 end
 
 local bind, unbind
@@ -1833,6 +1838,7 @@ function M.open()
         was_paused = mp.get_property_native("pause"),
     }
     api.set_skin(ed.skin)
+    require("beam").hold(true)
     mp.set_property_native("pause", true)
     api.set_editing(true)
     bind()
@@ -1851,6 +1857,7 @@ close = function ()
     overlay:remove()
     api.set_editing(false)
     mp.set_property_native("pause", was_paused)
+    require("beam").hold(false)
 end
 M.close = close
 

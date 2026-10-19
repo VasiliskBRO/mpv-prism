@@ -41,7 +41,7 @@ end
 local function more_folder()
     return {type = "folder", title = "Ещё", icon = "more_horiz", hint = "повтор, экран, звук…", blocks = {
         item("aspect"), item("loop"), item("audio_device"), item("show_in_folder"), item("stats"),
-        {type = "separator"}, item("menu_editor"),
+        {type = "separator"}, item("pet"), item("menu_editor"),
     }}
 end
 
@@ -75,7 +75,7 @@ M.TEMPLATES = {
             {type = "separator"},
             item("aspect"), item("loop"), item("audio_device"), item("show_in_folder"), item("stats"),
             {type = "separator"},
-            item("skins"), item("editor"), item("menu_editor"), item("quit"),
+            item("skins"), item("pet"), item("editor"), item("menu_editor"), item("quit"),
         }},
     }}},
     {id = "empty", name = "Пустое", about = "собери сам",

@@ -157,6 +157,7 @@ local function end_session()
     if not S.active then return end
     S.active = false
     mp.set_property_native("pause", S.was_paused)
+    require("beam").hold(false)
 end
 
 local function on_menu_closed()
@@ -693,6 +694,7 @@ function M.open()
     if not S.active then
         S.active = true
         S.was_paused = mp.get_property_native("pause")
+        require("beam").hold(true)
         mp.set_property_native("pause", true)
     end
     local s = api.kit.settings()

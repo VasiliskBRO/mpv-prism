@@ -1,4 +1,4 @@
--- The mascot of the "Жилец" skin: a little creature living on the bar.
+-- The pet "Призмочка" (settings in pet.lua): a little creature living on top of the bar in any skin.
 -- States: "sit" (playing, the bar is shown: sits on the edge, blinks), "peek" (pause: rises from behind the
 -- edge of the bar and looks up), "sleep" (nothing is playing: closed eyes, z z z), "wave" (the end of the video).
 -- The built-in one is "Призмочка": a prism with eyes in the accent color (so it follows the chameleon), with
@@ -213,9 +213,11 @@ end
 
 function M.update(new)
     local old_state = info and info.state
+    local old_y = info and info.rect and info.rect.y2
     info = new
     local st = new and new.state
-    if st ~= old_state then since = mp.get_time() end
+    -- a new state, or it moved to another edge (bar shown / hidden): its animation starts again
+    if st ~= old_state or (st == "peek" and new.rect and new.rect.y2 ~= old_y) then since = mp.get_time() end
     if st and new.rect then
         if not timer then timer = mp.add_periodic_timer(1 / FPS, render) end
     elseif timer then
