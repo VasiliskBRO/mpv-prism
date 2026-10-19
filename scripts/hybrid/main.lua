@@ -46,7 +46,7 @@ local user_opts = {
     volume_size = 36,                      -- volume widget width
     volume_step = 2,                       -- volume change per wheel tick
     volume_flash = true,                   -- briefly show the volume widget when volume changes
-    pause_indicator = "flash",             -- uosc-style pause indicator: "flash", "static" or "no"
+    pause_indicator = "prism",             -- pause indicator: "prism" (beam through a prism), "flash", "static" or "no"
     remember_volume = true,                -- restore the last volume on the next start
     remember_speed = true,                 -- restore the last playback speed on the next start
     theme = "orange",                      -- accent color theme: orange, blue, purple, green, red, pink or custom
@@ -56,6 +56,9 @@ local user_opts = {
     sponsorblock_colors = true,            -- color SponsorBlock segments on the seekbar, hide their helper chapters
 
     idlescreen = true,                     -- show mpv logo when idle
+    start_screen = "prism",                -- when idle: "prism" (cards of the last videos), "mpv" (its logo), "no"
+    start_cards = 4,                       -- how many cards of the last videos on Prism's start screen (0..6)
+    start_frames = true,                   -- a frame of the video on each card
     window_top_bar = "auto",               -- show OSC window top bar: "auto", "yes", or "no" (borderless/fullscreen)
     showwindowed = true,                   -- show OSC when windowed
     showfullscreen = true,                 -- show OSC when fullscreen
@@ -2509,6 +2512,7 @@ layouts["default"] = function ()
 
     -- area for show/hide
     local osc_top = posY - osc_geo.h
+    osc_param.bar_top = osc_top -- the pet sits here
     add_area("showhide", 0, get_align(-1 + (2 * user_opts.deadzonesize), osc_top, 0, 0), W, osc_param.playresy)
 
     local lo, geo, ne
@@ -2706,7 +2710,17 @@ local current_skin
 local apply_skin_look -- skin colors / seekbar thickness over hybrid.conf, set up next to the themes
 
 local function get_skin()
-    if not current_skin then current_skin = skins.load(user_opts.skin) end
+    if not current_skin then
+        current_skin = skins.load(user_opts.skin)
+        -- a skin with the old mascot item: the pet takes its pictures (once, if the pet was never set up)
+        local old = current_skin.old_mascot
+        current_skin.old_mascot = nil
+        if old and not require("pet").decided() then
+            local pet = require("pet").global()
+            pet.images, pet.quiet = old.images or {}, old.quiet
+            require("pet").set("enabled", true)
+        end
+    end
     return current_skin
 end
 
@@ -2721,22 +2735,19 @@ function volume_skin.get()
     }
 end
 
--- the mascot of the skin (an item {kind = "mascot"}, mascot.lua): which state it is in, where it lives.
+-- the pet (pet.lua settings, drawn by mascot.lua): which state it is in, where it sits on top of the bar.
 -- Called when the bar is rebuilt or shown/hidden, on pause, at the end, when nothing plays, around menus
 osc_param.update_mascot = function ()
     local mascot = require "mascot"
-    local item
-    if user_opts.layout == "skin" and not state.is_image then
-        for _, it in ipairs(get_skin().items) do
-            if it.custom and it.custom.kind == "mascot" then item = it break end
-        end
+    local pet = require("pet").get()
+    local W, top = osc_param.playresx, osc_param.bar_top
+    if not pet.enabled or state.is_image or not top or not W or W <= 0 or (state.menu_open and not state.skin_editing) then
+        return mascot.update(nil)
     end
-    local W, H = osc_param.playresx, osc_param.playresy
-    if not item or not W or W <= 0 or (state.menu_open and not state.skin_editing) then return mascot.update(nil) end
-    local w = item.w or 64
-    local x1 = item.anchor == "left" and item.x or (item.anchor == "center" and W / 2 + item.x)
-        or (item.anchor == "stretch" and item.x) or W + item.x
-    local y2 = H - item.bottom
+    local w = pet.size
+    local x1 = pet.place == "left" and 120 or (pet.place == "center" and (W - w) / 2) or W - 120 - w
+    -- the bar is hidden: it peeks / sleeps from behind the bottom edge of the window
+    local y2 = (state.osc_visible or state.skin_editing) and top or osc_param.playresy
     local st
     if state.skin_editing then
         st = "sit"
@@ -2746,13 +2757,17 @@ osc_param.update_mascot = function ()
         st = "wave"
     elseif mp.get_property_native("pause") then
         st = "peek"
-    elseif state.osc_visible and not item.custom.quiet then
+    elseif state.osc_visible and not pet.quiet then
         st = "sit"
     end
     local sx, sy = get_virt_scale_factor()
-    mascot.update({rect = {x1 = x1, y1 = y2 - item.h, x2 = x1 + w, y2 = y2}, res_x = W, res_y = H, state = st,
-                   accent = user_opts.seekbarfg_color, images = item.custom.images,
-                   sx = sx > 0 and sx or 1, sy = sy > 0 and sy or 1})
+    sx, sy = sx > 0 and sx or 1, sy > 0 and sy or 1
+    -- nothing plays: it naps on the cards of the start screen (window px there)
+    local spot = st == "sleep" and require("start").pet_spot()
+    if spot then x1, y2 = spot.x * sx - w / 2, spot.y * sy end
+    mascot.update({rect = {x1 = x1, y1 = y2 - w, x2 = x1 + w, y2 = y2}, res_x = W, res_y = osc_param.playresy, state = st,
+                   accent = user_opts.seekbarfg_color, images = next(pet.images) and pet.images or nil,
+                   sx = sx, sy = sy})
 end
 
 -- button styles by element; everything not listed is a side button (control_3)
@@ -3022,8 +3037,9 @@ local function apply_skin_item(id, lo, item)
     if item.alpha then lo.alpha[1] = item.alpha end
     if element.type ~= "button" then return end
     -- hover color (the "color" hover effect): item.hover = "theme" / "keep" (no change) / "#RRGGBB";
-    -- nil = auto: an item with its own color keeps it, the others take the theme color
-    local hover = item.hover or (item.color and "keep") or "theme"
+    -- nil = auto: an item with its own color or a round plate keeps it, the others take the theme color
+    -- (a button on a round plate too: the plate is the accent color, an accent icon would vanish on it)
+    local hover = item.hover or ((item.color or item.bg) and "keep") or "theme"
     if hover ~= "theme" and lo.button and lo.button.hoverstyle then
         local style = (lo.button.hoverstyle:gsub("\\1?c&H%x+&", ""))
         if hover ~= "keep" then
@@ -3088,6 +3104,7 @@ layouts["skin"] = function ()
     local list, bar_h = resolve_skin(skin, W, H, state.skin_editing)
 
     osc_param.video_margins.b = bar_h / H
+    osc_param.bar_top = H - bar_h -- the pet sits here
     osc_param.areas = {}
 
     -- mouse input covers the bar with its items; an item placed above the bar gets its own
@@ -3181,8 +3198,6 @@ layouts["skin"] = function ()
                 lo.alpha[3] = 0
                 lo.style = id == "time_codes" and osc_styles.time or osc_styles.cache
             elseif id == "speed_ruler" then
-                lo = place(id, 5, e)
-            elseif e.item.custom and e.item.custom.kind == "mascot" then
                 lo = place(id, 5, e)
             elseif e.item.custom and e.item.custom.kind == "plate" then
                 lo = place(id, 5, e)
@@ -4235,11 +4250,7 @@ local function osc_init()
     if user_opts.layout == "skin" then
         for _, item in ipairs(get_skin().items) do
             local custom = item.custom
-            if custom and custom.kind == "mascot" and item.id:match("^custom_") then
-                -- the mascot draws itself (mascot.lua); the element only keeps its box for the editor
-                ne = new_element(item.id, "custom")
-                ne.draw = function () end
-            elseif custom and custom.kind == "plate" and item.id:match("^custom_") then
+            if custom and custom.kind == "plate" and item.id:match("^custom_") then
                 -- a rounded plate under other items (no clicks): color, transparency, corner radius
                 local radius, color = item.radius, item.color or "#121218"
                 ne = new_element(item.id, "custom")
@@ -4917,7 +4928,22 @@ tick = function()
 
     if state.idle_active then
         msg.trace("idle message")
-        if user_opts.idlescreen then
+        -- the start screen: Prism's own (start.lua) or mpv's logo; a skin may choose ("Оформление")
+        local start_skin = user_opts.layout == "skin" and get_skin() or {}
+        local start_mode = start_skin.start_screen or user_opts.start_screen
+        if not user_opts.idlescreen or start_mode ~= "prism" or state.menu_open then require("start").hide() end
+        if user_opts.idlescreen and start_mode == "prism" then
+            render_wipe(state.logo_osd)
+            if not state.menu_open then
+                local cards = start_skin.start_cards or user_opts.start_cards
+                local frames = user_opts.start_frames
+                if start_skin.start_frames == false then frames = false end
+                require("start").show({cards = cards, frames = frames, accent = user_opts.seekbarfg_color,
+                                       font = user_opts.font})
+            end
+        elseif user_opts.idlescreen and start_mode == "no" then
+            render_wipe(state.logo_osd)
+        elseif user_opts.idlescreen then
             local display_aspect = state.osd_dimensions.aspect
             if display_aspect == 0 then return end
             local display_h = 360
@@ -4973,11 +4999,13 @@ tick = function()
         end
     elseif (state.fullscreen and user_opts.showfullscreen) or (not state.fullscreen and user_opts.showwindowed) then
         render_wipe(state.logo_osd)
+        require("start").hide()
         render()
     else
         -- Flush OSD
         render_wipe(state.osd)
         render_wipe(state.logo_osd)
+        require("start").hide()
     end
 
     state.tick_last_time = mp.get_time()
@@ -5363,11 +5391,16 @@ local pause_indicator = {
     start = nil,    -- flash start time
     timer = nil,
 }
+-- the skin may choose its own pause ("Оформление" -> "Значок паузы"), otherwise hybrid.conf
+pause_indicator.mode = function ()
+    local skin = (user_opts.layout == "skin" and not state.is_image) and get_skin() or {}
+    return skin.pause_indicator or user_opts.pause_indicator
+end
 
 local function render_pause_indicator()
     local pi = pause_indicator
     local w, h = state.osd_dimensions.w, state.osd_dimensions.h
-    local static = user_opts.pause_indicator == "static"
+    local static = pause_indicator.mode() == "static"
     local opacity = 0
     if static then
         opacity = pi.paused and 1 or 0
@@ -5404,13 +5437,37 @@ local function render_pause_indicator()
     set_osd(pi.osd, w, h, ass.text, 500)
 end
 
+-- the mode may change while a picture of the old one is on the screen (the editor, another skin): it goes
+-- away; show = true (a new look): the current mode is drawn for a pause that is already on
+pause_indicator.refresh = function (show)
+    local pi = pause_indicator
+    local mode = pause_indicator.mode()
+    if mode ~= "prism" or state.idle_active then require("beam").clear() end
+    if (mode ~= "static" and mode ~= "flash") or state.idle_active then
+        if pi.timer then pi.timer:kill() end
+        pi.timer, pi.start = nil, nil
+        render_wipe(pi.osd)
+    elseif mode == "static" and show then
+        render_pause_indicator()
+    end
+    if show and mode == "prism" and pi.paused and not state.idle_active
+            and mp.get_time() >= state.pause_flash_block_until then
+        require("beam").set(true, user_opts.seekbarfg_color)
+    end
+end
+
 mp.observe_property("pause", "bool", function (_, paused)
     local pi = pause_indicator
     local previous = pi.paused
     pi.paused = paused
-    if user_opts.pause_indicator == "no" or previous == nil or state.idle_active then return end
+    local mode = pause_indicator.mode()
+    -- whatever another mode left on the screen goes away; the prism (beam.lua): drawn in on pause, fades on play
+    pause_indicator.refresh(false)
+    if mode == "no" or previous == nil or state.idle_active then return end
     if mp.get_time() < state.pause_flash_block_until then return end
-    if user_opts.pause_indicator == "static" then
+    if mode == "prism" then
+        require("beam").set(paused, user_opts.seekbarfg_color)
+    elseif mode == "static" then
         render_pause_indicator()
     elseif previous ~= paused then
         pi.start = mp.get_time()
@@ -5591,6 +5648,19 @@ menus.init(menu, {
         return ok, err
     end,
     skin_list = skins.list,
+    -- the menu of the right click with this skin (its field "menu")
+    skin_menu = function () return user_opts.layout == "skin" and get_skin().menu or nil end,
+    -- one folder with the skin and all it uses (skinpack.lua)
+    skin_export = function ()
+        if user_opts.layout ~= "skin" then return false, "сначала выбери скин" end
+        local ok, err = require("skinpack").export(user_opts.skin, get_skin(), require("pet").copy(require("pet").get()))
+        return ok, not ok and err or nil
+    end,
+    skin_import = function (path)
+        local ok, file, name = require("skinpack").import(path)
+        if ok then choose_skin(file, "skin") end
+        return ok, not ok and file or nil, name
+    end,
 })
 
 -- skin editor: works on the skin that layout=skin draws
@@ -5915,6 +5985,11 @@ local function load_saved_state()
     if user_opts.remember_speed and tonumber(data.speed) then
         mp.set_property_number("speed", tonumber(data.speed))
     end
+    -- the "Жилец" skin became the pet (pet.lua): its capsule bar with the pet on top
+    if data.skin == "resident" and not utils.file_info(skins.path("resident")) then
+        data.skin = "capsule"
+        if not require("pet").decided() then require("pet").set("enabled", true) end
+    end
     -- skin picked in the menu wins over hybrid.conf
     if type(data.skin) == "string" and (data.layout == "skin" or data.layout == "default") then
         if data.layout == "default" or data.skin == skins.DEFAULT_NAME or utils.file_info(skins.path(data.skin)) then
@@ -6026,6 +6101,8 @@ apply_skin_look = function ()
     end
     set_osc_styles()
     menu.setup({accent = user_opts.seekbarfg_color, font = user_opts.font})
+    -- the skin may have another pause: the old picture goes, the new one shows if paused now
+    pause_indicator.refresh(true)
 end
 
 -- the mascot reacts to pause, the end of a file and the idle screen (no loop: its variables would count
@@ -6034,9 +6111,24 @@ mp.observe_property("pause", "native", function () osc_param.update_mascot() end
 mp.observe_property("eof-reached", "native", function () osc_param.update_mascot() end)
 mp.observe_property("idle-active", "native", function (_, idle)
     -- nothing plays: a frame preview left from the last file would hang in the middle of the screen
-    if idle then mp.commandv("script-message-to", "thumbfast", "clear") end
+    if idle then
+        mp.commandv("script-message-to", "thumbfast", "clear")
+        require("beam").clear()
+    end
     osc_param.update_mascot()
 end)
+require("pet").on_change = function () osc_param.update_mascot() end
+-- a skin may have its own pet: its field "pet"; changed in the editor (an undo step) or saved to the skin's file
+require("pet").hooks = {
+    skin_pet = function () return user_opts.layout == "skin" and not state.is_image and get_skin().pet or nil end,
+    set_skin_pet = function (p) get_skin().pet = p end,
+    skin_edit = function (fn)
+        if state.skin_editing then return editor.change_skin(fn) end
+        fn()
+        skins.save(user_opts.skin, get_skin())
+    end,
+}
+require("start").on_layout = function () osc_param.update_mascot() end
 
 -- a new chameleon color: the look again, the bar rebuilt with it; the start of a change is the theme's accent
 require("chameleon").setup({
@@ -6079,7 +6171,9 @@ local function validate_user_opts()
     validate_string_opt("keeponpause",  {"no", "bottombar", "both"}, "no")
     validate_string_opt("deadzone_hide", {"instant", "timeout"}, "instant")
     validate_string_opt("volume_widget", {"right", "left", "no"}, "right")
-    validate_string_opt("pause_indicator", {"flash", "static", "no"}, "flash")
+    validate_string_opt("pause_indicator", {"prism", "flash", "static", "no"}, "prism")
+    validate_string_opt("start_screen", {"prism", "mpv", "no"}, "prism")
+    user_opts.start_cards = math.max(0, math.min(6, math.floor(tonumber(user_opts.start_cards) or 4)))
     validate_string_opt("layout", {"default", "skin"}, "default")
 
     local hbc = user_opts.seek_handle_border_color
