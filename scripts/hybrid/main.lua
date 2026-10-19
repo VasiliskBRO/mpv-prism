@@ -3037,8 +3037,9 @@ local function apply_skin_item(id, lo, item)
     if item.alpha then lo.alpha[1] = item.alpha end
     if element.type ~= "button" then return end
     -- hover color (the "color" hover effect): item.hover = "theme" / "keep" (no change) / "#RRGGBB";
-    -- nil = auto: an item with its own color keeps it, the others take the theme color
-    local hover = item.hover or (item.color and "keep") or "theme"
+    -- nil = auto: an item with its own color or a round plate keeps it, the others take the theme color
+    -- (a button on a round plate too: the plate is the accent color, an accent icon would vanish on it)
+    local hover = item.hover or ((item.color or item.bg) and "keep") or "theme"
     if hover ~= "theme" and lo.button and lo.button.hoverstyle then
         local style = (lo.button.hoverstyle:gsub("\\1?c&H%x+&", ""))
         if hover ~= "keep" then
@@ -5436,13 +5437,32 @@ local function render_pause_indicator()
     set_osd(pi.osd, w, h, ass.text, 500)
 end
 
+-- the mode may change while a picture of the old one is on the screen (the editor, another skin): it goes
+-- away; show = true (a new look): the current mode is drawn for a pause that is already on
+pause_indicator.refresh = function (show)
+    local pi = pause_indicator
+    local mode = pause_indicator.mode()
+    if mode ~= "prism" or state.idle_active then require("beam").clear() end
+    if (mode ~= "static" and mode ~= "flash") or state.idle_active then
+        if pi.timer then pi.timer:kill() end
+        pi.timer, pi.start = nil, nil
+        render_wipe(pi.osd)
+    elseif mode == "static" and show then
+        render_pause_indicator()
+    end
+    if show and mode == "prism" and pi.paused and not state.idle_active
+            and mp.get_time() >= state.pause_flash_block_until then
+        require("beam").set(true, user_opts.seekbarfg_color)
+    end
+end
+
 mp.observe_property("pause", "bool", function (_, paused)
     local pi = pause_indicator
     local previous = pi.paused
     pi.paused = paused
     local mode = pause_indicator.mode()
-    -- the prism (beam.lua): drawn in on pause, stays, fades on play
-    if mode ~= "prism" or state.idle_active then require("beam").clear() end
+    -- whatever another mode left on the screen goes away; the prism (beam.lua): drawn in on pause, fades on play
+    pause_indicator.refresh(false)
     if mode == "no" or previous == nil or state.idle_active then return end
     if mp.get_time() < state.pause_flash_block_until then return end
     if mode == "prism" then
@@ -6068,6 +6088,8 @@ apply_skin_look = function ()
     end
     set_osc_styles()
     menu.setup({accent = user_opts.seekbarfg_color, font = user_opts.font})
+    -- the skin may have another pause: the old picture goes, the new one shows if paused now
+    pause_indicator.refresh(true)
 end
 
 -- the mascot reacts to pause, the end of a file and the idle screen (no loop: its variables would count
