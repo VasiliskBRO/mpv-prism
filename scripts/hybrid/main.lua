@@ -56,6 +56,9 @@ local user_opts = {
     sponsorblock_colors = true,            -- color SponsorBlock segments on the seekbar, hide their helper chapters
 
     idlescreen = true,                     -- show mpv logo when idle
+    start_screen = "prism",                -- when idle: "prism" (cards of the last videos), "mpv" (its logo), "no"
+    start_cards = 4,                       -- how many cards of the last videos on Prism's start screen (0..6)
+    start_frames = true,                   -- a frame of the video on each card
     window_top_bar = "auto",               -- show OSC window top bar: "auto", "yes", or "no" (borderless/fullscreen)
     showwindowed = true,                   -- show OSC when windowed
     showfullscreen = true,                 -- show OSC when fullscreen
@@ -2758,9 +2761,13 @@ osc_param.update_mascot = function ()
         st = "sit"
     end
     local sx, sy = get_virt_scale_factor()
+    sx, sy = sx > 0 and sx or 1, sy > 0 and sy or 1
+    -- nothing plays: it naps on the cards of the start screen (window px there)
+    local spot = st == "sleep" and require("start").pet_spot()
+    if spot then x1, y2 = spot.x * sx - w / 2, spot.y * sy end
     mascot.update({rect = {x1 = x1, y1 = y2 - w, x2 = x1 + w, y2 = y2}, res_x = W, res_y = osc_param.playresy, state = st,
                    accent = user_opts.seekbarfg_color, images = next(pet.images) and pet.images or nil,
-                   sx = sx > 0 and sx or 1, sy = sy > 0 and sy or 1})
+                   sx = sx, sy = sy})
 end
 
 -- button styles by element; everything not listed is a side button (control_3)
@@ -4920,7 +4927,22 @@ tick = function()
 
     if state.idle_active then
         msg.trace("idle message")
-        if user_opts.idlescreen then
+        -- the start screen: Prism's own (start.lua) or mpv's logo; a skin may choose ("Оформление")
+        local start_skin = user_opts.layout == "skin" and get_skin() or {}
+        local start_mode = start_skin.start_screen or user_opts.start_screen
+        if not user_opts.idlescreen or start_mode ~= "prism" or state.menu_open then require("start").hide() end
+        if user_opts.idlescreen and start_mode == "prism" then
+            render_wipe(state.logo_osd)
+            if not state.menu_open then
+                local cards = start_skin.start_cards or user_opts.start_cards
+                local frames = user_opts.start_frames
+                if start_skin.start_frames == false then frames = false end
+                require("start").show({cards = cards, frames = frames, accent = user_opts.seekbarfg_color,
+                                       font = user_opts.font})
+            end
+        elseif user_opts.idlescreen and start_mode == "no" then
+            render_wipe(state.logo_osd)
+        elseif user_opts.idlescreen then
             local display_aspect = state.osd_dimensions.aspect
             if display_aspect == 0 then return end
             local display_h = 360
@@ -4976,11 +4998,13 @@ tick = function()
         end
     elseif (state.fullscreen and user_opts.showfullscreen) or (not state.fullscreen and user_opts.showwindowed) then
         render_wipe(state.logo_osd)
+        require("start").hide()
         render()
     else
         -- Flush OSD
         render_wipe(state.osd)
         render_wipe(state.logo_osd)
+        require("start").hide()
     end
 
     state.tick_last_time = mp.get_time()
@@ -6059,6 +6083,7 @@ mp.observe_property("idle-active", "native", function (_, idle)
     osc_param.update_mascot()
 end)
 require("pet").on_change = function () osc_param.update_mascot() end
+require("start").on_layout = function () osc_param.update_mascot() end
 
 -- a new chameleon color: the look again, the bar rebuilt with it; the start of a change is the theme's accent
 require("chameleon").setup({
@@ -6102,6 +6127,8 @@ local function validate_user_opts()
     validate_string_opt("deadzone_hide", {"instant", "timeout"}, "instant")
     validate_string_opt("volume_widget", {"right", "left", "no"}, "right")
     validate_string_opt("pause_indicator", {"prism", "flash", "static", "no"}, "prism")
+    validate_string_opt("start_screen", {"prism", "mpv", "no"}, "prism")
+    user_opts.start_cards = math.max(0, math.min(6, math.floor(tonumber(user_opts.start_cards) or 4)))
     validate_string_opt("layout", {"default", "skin"}, "default")
 
     local hbc = user_opts.seek_handle_border_color

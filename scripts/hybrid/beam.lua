@@ -2,7 +2,8 @@
 -- comes into it from the left and leaves as a rainbow fan. On pause it is drawn in (~0.6 s) and then stays still
 -- (no timer: nothing to redraw while paused); on play it fades away. The glass is tinted with the accent.
 --
--- beam.set(paused, accent) - start the pause / play animation; beam.clear() - hide at once (idle, other mode)
+-- beam.set(paused, accent) - start the pause / play animation; beam.clear() - hide at once (idle, other mode);
+-- beam.hold(true / false) - an editor is open: nothing is drawn
 
 local assdraw = require "mp.assdraw"
 
@@ -42,6 +43,69 @@ local function bar(a, b, w)
     return poly({{a[1] + nx, a[2] + ny}, {b[1] + nx, b[2] + ny}, {b[1] - nx, b[2] - ny}, {a[1] - nx, a[2] - ny}})
 end
 
+-- the prism with its beam and rainbow: center (cx, cy), side s; p: how far it is drawn in (0..1), k: how much of
+-- it is there (1 - fading away); bars: the pause sign inside. Also the logo of the start screen (start.lua)
+function M.draw(ass, cx, cy, s, accent, p, k, bars)
+    local top, bl, br = {cx, cy - s * 0.58}, {cx - s / 2, cy + s * 0.29}, {cx + s / 2, cy + s * 0.29}
+    local fade = 255 * (1 - k)
+
+    -- 1) the white beam reaching the left face (0 .. 0.4 of the way in)
+    local p_in = lerp(top, bl, 0.55)
+    local from = {p_in[1] - s * 1.7, p_in[2] + s * 0.42}
+    local reach = ease(p / 0.4)
+    if reach > 0 then
+        local tip = lerp(from, p_in, reach)
+        shape(ass, "#FFFFFF", 0xC8 + (255 - 0xC8) * (1 - k), bar(lerp(from, tip, 0.3), tip, s * 0.075), "\\blur3")
+        -- the far end comes out of nowhere: fainter pieces
+        for j = 0, PIECES - 1 do
+            local a, b = lerp(from, tip, 0.35 * j / PIECES), lerp(from, tip, 0.35 * (j + 1) / PIECES)
+            shape(ass, "#FFFFFF", math.max(0xF0 - (0xF0 - 0x30) * (j + 1) / PIECES, fade), bar(a, b, s * 0.022))
+        end
+        shape(ass, "#FFFFFF", math.max(0x30, fade), bar(lerp(from, tip, 0.35), tip, s * 0.022))
+    end
+
+    -- 2) the glass: accent tint, a lit edge, a soft white rim; two pause bars inside (bars)
+    local glass = ease(p / 0.3)
+    shape(ass, accent, 255 - (0x70 * glass * k), poly({top, br, bl}))
+    shape(ass, "#FFFFFF", 255 - (0x50 * glass * k), poly({top, lerp(bl, br, 0.38), bl}))
+    -- the rim: a border only (the fill is invisible)
+    shape(ass, "#FFFFFF", 255, poly({top, br, bl}),
+        string.format("\\bord2\\3c&HFFFFFF&\\3a&H%02X&", math.floor(255 - 0xC0 * glass * k)))
+    if bars then
+        local bw, bh = s * 0.055, s * 0.2
+        for _, x in ipairs({cx - s * 0.075, cx + s * 0.075 - bw}) do
+            local y = cy + s * 0.02
+            shape(ass, "#FFFFFF", 255 - (0xD8 * glass * k), poly({{x, y - bh / 2}, {x + bw, y - bh / 2}, {x + bw, y + bh / 2}, {x, y + bh / 2}}))
+        end
+    end
+
+    -- 3) the rainbow leaving the right face (0.4 .. 1 of the way in)
+    local p_out = lerp(top, br, 0.6)
+    local spread = ease((p - 0.4) / 0.6)
+    if spread > 0 then
+        -- inside the glass: the beam crossing it
+        shape(ass, "#FFFFFF", math.max(0x70, fade), bar(p_in, p_out, s * 0.02))
+        local len = s * 1.9 * spread
+        local function at(a, d) return {p_out[1] + math.cos(a) * d, p_out[2] + math.sin(a) * d} end
+        for i, color in ipairs(SPECTRUM) do
+            local a1 = math.rad(4 + (i - 1) * 4.2 * spread)
+            local a2 = math.rad(4 + i * 4.2 * spread)
+            -- the rainbow dissolves instead of ending with an edge: rays of growing length laid over each other
+            -- (pieces side by side would show their seams). Opacity wanted on step j: solid on the first half,
+            -- then less and less; each layer adds what is missing over the longer ones
+            local function wanted(j)
+                if j > PIECES then return 0 end
+                return 0.81 * k * (1 - j / (PIECES + 1)) ^ 1.3
+            end
+            for j = PIECES, 0, -1 do
+                local d = len * (0.5 + 0.5 * j / PIECES)
+                local layer = 1 - (1 - wanted(j)) / (1 - wanted(j + 1))
+                shape(ass, color, 255 * (1 - layer), poly({p_out, at(a1, d), at(a2, d)}), "\\blur0.6")
+            end
+        end
+    end
+end
+
 local function render()
     local dims = mp.get_property_native("osd-dimensions") or {}
     local w, h = dims.w or 0, dims.h or 0
@@ -62,63 +126,7 @@ local function render()
     -- dim the video a little
     shape(ass, "#000000", 255 - 0.28 * 255 * ease(paused and p / 0.5 or k), poly({{0, 0}, {w, 0}, {w, h}, {0, h}}), "\\blur0")
 
-    local s = math.min(w, h) * 0.24 -- side of the prism
-    local cx, cy = w / 2, h / 2
-    local top, bl, br = {cx, cy - s * 0.58}, {cx - s / 2, cy + s * 0.29}, {cx + s / 2, cy + s * 0.29}
-    local fade = 255 * (1 - k)
-
-    -- 1) the white beam reaching the left face (0 .. 0.4 of the way in)
-    local p_in = lerp(top, bl, 0.55)
-    local from = {p_in[1] - s * 1.7, p_in[2] + s * 0.42}
-    local reach = ease(p / 0.4)
-    if reach > 0 then
-        local tip = lerp(from, p_in, reach)
-        shape(ass, "#FFFFFF", 0xC8 + (255 - 0xC8) * (1 - k), bar(lerp(from, tip, 0.3), tip, s * 0.075), "\\blur3")
-        -- the far end comes out of nowhere: fainter pieces
-        for j = 0, PIECES - 1 do
-            local a, b = lerp(from, tip, 0.35 * j / PIECES), lerp(from, tip, 0.35 * (j + 1) / PIECES)
-            shape(ass, "#FFFFFF", math.max(0xF0 - (0xF0 - 0x30) * (j + 1) / PIECES, fade), bar(a, b, s * 0.022))
-        end
-        shape(ass, "#FFFFFF", math.max(0x30, fade), bar(lerp(from, tip, 0.35), tip, s * 0.022))
-    end
-
-    -- 2) the glass: accent tint, a lit edge, a soft white rim; two pause bars inside
-    local glass = ease(p / 0.3)
-    shape(ass, accent, 255 - (0x70 * glass * k), poly({top, br, bl}))
-    shape(ass, "#FFFFFF", 255 - (0x50 * glass * k), poly({top, lerp(bl, br, 0.38), bl}))
-    -- the rim: a border only (the fill is invisible)
-    shape(ass, "#FFFFFF", 255, poly({top, br, bl}),
-        string.format("\\bord2\\3c&HFFFFFF&\\3a&H%02X&", math.floor(255 - 0xC0 * glass * k)))
-    local bw, bh = s * 0.055, s * 0.2
-    for _, x in ipairs({cx - s * 0.075, cx + s * 0.075 - bw}) do
-        local y = cy + s * 0.02
-        shape(ass, "#FFFFFF", 255 - (0xD8 * glass * k), poly({{x, y - bh / 2}, {x + bw, y - bh / 2}, {x + bw, y + bh / 2}, {x, y + bh / 2}}))
-    end
-
-    -- 3) the rainbow leaving the right face (0.4 .. 1 of the way in)
-    local p_out = lerp(top, br, 0.6)
-    local spread = ease((p - 0.4) / 0.6)
-    if spread > 0 then
-        -- inside the glass: the beam crossing it
-        shape(ass, "#FFFFFF", math.max(0x70, fade), bar(p_in, p_out, s * 0.02))
-        local len = s * 1.9 * spread
-        local function at(a, d) return {p_out[1] + math.cos(a) * d, p_out[2] + math.sin(a) * d} end
-        for i, color in ipairs(SPECTRUM) do
-            local a1 = math.rad(4 + (i - 1) * 4.2 * spread)
-            local a2 = math.rad(4 + i * 4.2 * spread)
-            -- each ray in pieces, each one fainter: the rainbow dissolves instead of ending with an edge
-            local d0 = 0
-            for j = 0, PIECES do
-                -- the first piece is the solid half, then fainter and fainter
-                local d1 = len * (j == 0 and 0.5 or 0.5 + 0.5 * j / PIECES)
-                local base = 0x30 + (255 - 0x30) * (j / (PIECES + 1)) ^ 1.3
-                local drawing = d0 == 0 and poly({p_out, at(a1, d1), at(a2, d1)})
-                    or poly({at(a1, d0), at(a1, d1), at(a2, d1), at(a2, d0)})
-                shape(ass, color, base + (255 - base) * (1 - k), drawing, "\\blur0.6")
-                d0 = d1
-            end
-        end
-    end
+    M.draw(ass, w / 2, h / 2, math.min(w, h) * 0.24, accent, p, k, true)
 
     overlay.res_x, overlay.res_y = w, h
     overlay.z = 500 -- under the bar and the menus
@@ -126,9 +134,16 @@ local function render()
     overlay:update()
 end
 
+-- an editor pauses the video to work on it: no prism over the bar being edited
+local held = false
+function M.hold(on)
+    held = on
+    if on then M.clear() end
+end
+
 function M.set(is_paused, color)
     if type(color) == "string" and color:match("^#%x%x%x%x%x%x$") then accent = color end
-    if is_paused == paused then return end
+    if held or is_paused == paused then return end
     paused = is_paused
     since = mp.get_time()
     if not timer then timer = mp.add_periodic_timer(1 / 60, render) end

@@ -343,6 +343,7 @@ local function history()
         items[#items + 1] = {title = T.history_clear, icon = "delete_sweep", action = function ()
             local out = io.open(history_path(), "w")
             if out then out:close() end
+            require("start").forget() -- the cards of the start screen and their frames too
             mp.osd_message(T.history_cleared)
         end}
     end

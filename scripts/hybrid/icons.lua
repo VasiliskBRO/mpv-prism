@@ -6,6 +6,7 @@
 --          Converted once per size by mpv itself into ~~cache/prism-icons (raw BGRA, premultiplied alpha).
 -- PNG overlays are drawn per owner ("menu", "ring", "bar"): M.begin(owner) before a render, M.png(...) for
 -- each picture, M.flush(owner, redraw) after it; M.clear(owner) when the owner is hidden.
+-- M.picture(...) shows any picture file (a full path) filling a w x h box: the frames on the start screen.
 
 local utils = require "mp.utils"
 
@@ -423,7 +424,8 @@ end
 -- PNG pictures through overlay-add ---------------------------------------------------------------------
 
 -- 42 belongs to thumbfast (its overlay_id), so the pictures keep out of it
-local RANGES = {menu = {1, 20}, ring = {21, 30}, mascot = {31, 41}, bar = {44, 63}}
+-- mpv takes overlay ids 0..63 only
+local RANGES = {menu = {1, 20}, ring = {21, 30}, mascot = {31, 41}, bar = {44, 55}, start = {56, 63}}
 local frames = {}   -- owner -> pictures asked for during the current render
 local shown = {}    -- overlay id -> what it shows now
 local ready = {}    -- name@px -> raw file path; false while converting or when it failed
@@ -454,25 +456,26 @@ local function premultiply(path)
     return true
 end
 
-local function convert(name, px, key, redraw)
+-- src: the picture file; pw x ph: the size; fill: cover the box (cropping), otherwise fit in it (transparent around)
+local function convert(src, pw, ph, key, redraw, fill)
     ready[key] = false
     local dir = cache_dir()
     make_dir(dir)
     counter = counter + 1
-    local out = dir .. "\\icon" .. counter .. "_" .. px .. ".bgra"
+    local out = dir .. "\\icon" .. counter .. "_" .. pw .. "x" .. ph .. ".bgra"
+    local size = pw .. ":" .. ph
+    local vf = fill and ("scale=" .. size .. ":force_original_aspect_ratio=increase,crop=" .. size .. ",format=bgra")
+        or ("scale=" .. size .. ":force_original_aspect_ratio=decrease,pad=" .. size .. ":-1:-1:color=black@0,format=bgra")
     mp.command_native_async({
         name = "subprocess", playback_only = false, capture_stdout = true, capture_stderr = true,
-        args = {"mpv", "--no-config", "--msg-level=all=error", M.dir() .. "\\" .. file_of(name),
-                -- keep the proportions inside a px x px square, transparent around
-                "--vf=scale=" .. px .. ":" .. px .. ":force_original_aspect_ratio=decrease,pad=" .. px .. ":" .. px ..
-                ":-1:-1:color=black@0,format=bgra",
+        args = {"mpv", "--no-config", "--msg-level=all=error", src, "--vf=" .. vf,
                 "--frames=1", "--of=rawvideo", "--ovc=rawvideo", "--o=" .. out},
     }, function (success, result)
         local info = utils.file_info(out)
-        if success and result and result.status == 0 and info and info.size == px * px * 4 and premultiply(out) then
+        if success and result and result.status == 0 and info and info.size == pw * ph * 4 and premultiply(out) then
             ready[key] = out
         else
-            mp.msg.warn("icon " .. name .. " could not be converted")
+            mp.msg.warn("picture " .. src .. " could not be converted")
         end
         if redraw then redraw() end
     end)
@@ -486,6 +489,13 @@ function M.png(owner, name, cx, cy, size)
     if list then list[#list + 1] = {name = name, cx = cx, cy = cy, size = size} end
 end
 
+-- any picture file covering the box x, y, w, h (window pixels, top left corner); stamp: changes when the file
+-- changes (its mtime), so a new picture under the same name is converted again
+function M.picture(owner, path, x, y, w, h, stamp)
+    local list = frames[owner]
+    if list then list[#list + 1] = {path = path, x = x, y = y, w = w, h = h, stamp = stamp} end
+end
+
 function M.flush(owner, redraw)
     local list = frames[owner] or {}
     local first, last = RANGES[owner][1], RANGES[owner][2]
@@ -493,17 +503,25 @@ function M.flush(owner, redraw)
     for k, r in ipairs(list) do
         local id = first + k - 1
         if id > last then break end
-        local px = math.max(4, math.floor(r.size + 0.5))
-        local key = r.name .. "@" .. px
+        local pw, ph, x, y, key, src
+        if r.path then
+            pw, ph = math.max(4, math.floor(r.w + 0.5)), math.max(4, math.floor(r.h + 0.5))
+            x, y = math.floor(r.x + 0.5), math.floor(r.y + 0.5)
+            key, src = r.path .. "@" .. tostring(r.stamp) .. "@" .. pw .. "x" .. ph, r.path
+        else
+            pw = math.max(4, math.floor(r.size + 0.5))
+            ph = pw
+            x, y = math.floor(r.cx - pw / 2 + 0.5), math.floor(r.cy - pw / 2 + 0.5)
+            key, src = r.name .. "@" .. pw, M.dir() .. "\\" .. file_of(r.name)
+        end
         local path = ready[key]
         if path == nil then
-            convert(r.name, px, key, redraw)
+            convert(src, pw, ph, key, redraw, r.path ~= nil)
         elseif path then
-            local x, y = math.floor(r.cx - px / 2 + 0.5), math.floor(r.cy - px / 2 + 0.5)
             local sig = path .. "|" .. x .. "|" .. y
             if shown[id] ~= sig then
                 mp.commandv("overlay-add", tostring(id), tostring(x), tostring(y), path, "0", "bgra",
-                    tostring(px), tostring(px), tostring(px * 4))
+                    tostring(pw), tostring(ph), tostring(pw * 4))
                 shown[id] = sig
             end
             used[id] = true

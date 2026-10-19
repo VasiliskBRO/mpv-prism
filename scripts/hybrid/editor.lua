@@ -1439,6 +1439,10 @@ local LOOK = {
     -- the pause in the middle of the video
     pause_indicator = {{"Как в настройках", nil}, {"Призма — луч и радуга", "prism"}, {"Вспышка", "flash"},
                        {"Висит, пока пауза", "static"}, {"Нет", "no"}},
+    -- the screen when nothing plays
+    start_screen = {{"Как в настройках", nil}, {"Prism — последние видео", "prism"}, {"Логотип mpv", "mpv"}, {"Пустой", "no"}},
+    start_cards = {{"Как в настройках", nil}, {"Без карточек", 0}, {"2", 2}, {"3", 3}, {"4", 4}, {"6", 6}},
+    start_frames = {{"Показывать", nil}, {"Без кадров", false}},
     -- the volume scale
     volume_max = {{"Как в mpv.conf", nil}, {"100%", 100}, {"130%", 130}, {"150%", 150}, {"200%", 200}},
     volume_step = {{"Как в настройках", nil}, {"1%", 1}, {"2%", 2}, {"5%", 5}, {"10%", 10}},
@@ -1555,6 +1559,11 @@ look_menu = function ()
         add("Толщина полосы перемотки", "line_weight", "seekbar_height")
         add("Свечение полосы", "flare", "glow")
         add("Значок паузы", "pause_circle", "pause_indicator")
+        add("Стартовый экран", "home", "start_screen")
+        if ed.skin.start_screen ~= "mpv" and ed.skin.start_screen ~= "no" then
+            add("Карточки последних видео", "view_carousel", "start_cards")
+            add("Кадры на карточках", "image", "start_frames")
+        end
         add("Цвет кружка на полосе", "radio_button_checked", "handle_color")
         add("Обводка кружка", "trip_origin", "handle_border_color")
         items[#items].separator = true
@@ -1785,6 +1794,7 @@ function M.open()
         was_paused = mp.get_property_native("pause"),
     }
     api.set_skin(ed.skin)
+    require("beam").hold(true)
     mp.set_property_native("pause", true)
     api.set_editing(true)
     bind()
@@ -1803,6 +1813,7 @@ close = function ()
     overlay:remove()
     api.set_editing(false)
     mp.set_property_native("pause", was_paused)
+    require("beam").hold(false)
 end
 M.close = close
 
