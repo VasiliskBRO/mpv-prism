@@ -49,6 +49,24 @@ function M.list()
     return list
 end
 
+-- the "МОИ ИКОНКИ" part of an icon choice menu: own icons, the folder, a refresh; pick(name) is the action
+function M.picker_items(list, current, pick, no_builtin)
+    list[#list + 1] = {header = true, title = "МОИ ИКОНКИ"}
+    for _, own in ipairs(M.list()) do
+        list[#list + 1] = {title = own.title, icon = own.name, hint = own.kind:upper(), active = own.name == current,
+                           action = function () return pick(own.name) end}
+    end
+    list[#list + 1] = {title = "Открыть папку с иконками", icon = "folder_open", hint = "кидай туда .svg или .png",
+        action = function ()
+            make_dir(M.dir())
+            mp.commandv("run", "explorer", M.dir())
+            return "stay"
+        end}
+    list[#list + 1] = {title = "Обновить список", icon = "refresh", separator = not no_builtin,
+                       action = function () M.forget() return "keep" end}
+    if not no_builtin then list[#list + 1] = {header = true, title = "ВСТРОЕННЫЕ"} end
+end
+
 -- SVG -> contours ------------------------------------------------------------------------------------
 
 local function tokenize(d)

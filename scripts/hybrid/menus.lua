@@ -809,6 +809,10 @@ local CATALOG = {
          local layout, _, skin_name = hooks.skin_current()
          return {hint = layout == "skin" and skin_name or T.off_hint, submenu = skins_menu}
      end},
+    {id = "pet", group = "Prism", title = "Питомец", tile = "Питомец", icon = "pets",
+     make = function ()
+         return {hint = require("pet").get().enabled and "включён" or T.off_hint, submenu = require("pet").menu}
+     end},
     {id = "editor", group = "Prism", title = T.editor, tile = "Редактор", icon = "dashboard_customize", key = "Ctrl+E",
      make = function () return {action = run("script-binding hybrid/editor")} end},
     {id = "menu_editor", group = "Prism", title = "Настроить меню…", tile = "Меню", icon = "tune", key = "Ctrl+Shift+E",

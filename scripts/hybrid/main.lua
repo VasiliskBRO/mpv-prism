@@ -2509,6 +2509,7 @@ layouts["default"] = function ()
 
     -- area for show/hide
     local osc_top = posY - osc_geo.h
+    osc_param.bar_top = osc_top -- the pet sits here
     add_area("showhide", 0, get_align(-1 + (2 * user_opts.deadzonesize), osc_top, 0, 0), W, osc_param.playresy)
 
     local lo, geo, ne
@@ -2706,7 +2707,17 @@ local current_skin
 local apply_skin_look -- skin colors / seekbar thickness over hybrid.conf, set up next to the themes
 
 local function get_skin()
-    if not current_skin then current_skin = skins.load(user_opts.skin) end
+    if not current_skin then
+        current_skin = skins.load(user_opts.skin)
+        -- a skin with the old mascot item: the pet takes its pictures (once, if the pet was never set up)
+        local old = current_skin.old_mascot
+        current_skin.old_mascot = nil
+        if old and not require("pet").decided() then
+            local pet = require("pet").get()
+            pet.images, pet.quiet = old.images or {}, old.quiet
+            require("pet").set("enabled", true)
+        end
+    end
     return current_skin
 end
 
@@ -2721,22 +2732,19 @@ function volume_skin.get()
     }
 end
 
--- the mascot of the skin (an item {kind = "mascot"}, mascot.lua): which state it is in, where it lives.
+-- the pet (pet.lua settings, drawn by mascot.lua): which state it is in, where it sits on top of the bar.
 -- Called when the bar is rebuilt or shown/hidden, on pause, at the end, when nothing plays, around menus
 osc_param.update_mascot = function ()
     local mascot = require "mascot"
-    local item
-    if user_opts.layout == "skin" and not state.is_image then
-        for _, it in ipairs(get_skin().items) do
-            if it.custom and it.custom.kind == "mascot" then item = it break end
-        end
+    local pet = require("pet").get()
+    local W, top = osc_param.playresx, osc_param.bar_top
+    if not pet.enabled or state.is_image or not top or not W or W <= 0 or (state.menu_open and not state.skin_editing) then
+        return mascot.update(nil)
     end
-    local W, H = osc_param.playresx, osc_param.playresy
-    if not item or not W or W <= 0 or (state.menu_open and not state.skin_editing) then return mascot.update(nil) end
-    local w = item.w or 64
-    local x1 = item.anchor == "left" and item.x or (item.anchor == "center" and W / 2 + item.x)
-        or (item.anchor == "stretch" and item.x) or W + item.x
-    local y2 = H - item.bottom
+    local w = pet.size
+    local x1 = pet.place == "left" and 120 or (pet.place == "center" and (W - w) / 2) or W - 120 - w
+    -- the bar is hidden: it peeks / sleeps from behind the bottom edge of the window
+    local y2 = (state.osc_visible or state.skin_editing) and top or osc_param.playresy
     local st
     if state.skin_editing then
         st = "sit"
@@ -2746,12 +2754,12 @@ osc_param.update_mascot = function ()
         st = "wave"
     elseif mp.get_property_native("pause") then
         st = "peek"
-    elseif state.osc_visible and not item.custom.quiet then
+    elseif state.osc_visible and not pet.quiet then
         st = "sit"
     end
     local sx, sy = get_virt_scale_factor()
-    mascot.update({rect = {x1 = x1, y1 = y2 - item.h, x2 = x1 + w, y2 = y2}, res_x = W, res_y = H, state = st,
-                   accent = user_opts.seekbarfg_color, images = item.custom.images,
+    mascot.update({rect = {x1 = x1, y1 = y2 - w, x2 = x1 + w, y2 = y2}, res_x = W, res_y = osc_param.playresy, state = st,
+                   accent = user_opts.seekbarfg_color, images = next(pet.images) and pet.images or nil,
                    sx = sx > 0 and sx or 1, sy = sy > 0 and sy or 1})
 end
 
@@ -3088,6 +3096,7 @@ layouts["skin"] = function ()
     local list, bar_h = resolve_skin(skin, W, H, state.skin_editing)
 
     osc_param.video_margins.b = bar_h / H
+    osc_param.bar_top = H - bar_h -- the pet sits here
     osc_param.areas = {}
 
     -- mouse input covers the bar with its items; an item placed above the bar gets its own
@@ -3181,8 +3190,6 @@ layouts["skin"] = function ()
                 lo.alpha[3] = 0
                 lo.style = id == "time_codes" and osc_styles.time or osc_styles.cache
             elseif id == "speed_ruler" then
-                lo = place(id, 5, e)
-            elseif e.item.custom and e.item.custom.kind == "mascot" then
                 lo = place(id, 5, e)
             elseif e.item.custom and e.item.custom.kind == "plate" then
                 lo = place(id, 5, e)
@@ -4235,11 +4242,7 @@ local function osc_init()
     if user_opts.layout == "skin" then
         for _, item in ipairs(get_skin().items) do
             local custom = item.custom
-            if custom and custom.kind == "mascot" and item.id:match("^custom_") then
-                -- the mascot draws itself (mascot.lua); the element only keeps its box for the editor
-                ne = new_element(item.id, "custom")
-                ne.draw = function () end
-            elseif custom and custom.kind == "plate" and item.id:match("^custom_") then
+            if custom and custom.kind == "plate" and item.id:match("^custom_") then
                 -- a rounded plate under other items (no clicks): color, transparency, corner radius
                 local radius, color = item.radius, item.color or "#121218"
                 ne = new_element(item.id, "custom")
@@ -5915,6 +5918,11 @@ local function load_saved_state()
     if user_opts.remember_speed and tonumber(data.speed) then
         mp.set_property_number("speed", tonumber(data.speed))
     end
+    -- the "Жилец" skin became the pet (pet.lua): its capsule bar with the pet on top
+    if data.skin == "resident" and not utils.file_info(skins.path("resident")) then
+        data.skin = "capsule"
+        if not require("pet").decided() then require("pet").set("enabled", true) end
+    end
     -- skin picked in the menu wins over hybrid.conf
     if type(data.skin) == "string" and (data.layout == "skin" or data.layout == "default") then
         if data.layout == "default" or data.skin == skins.DEFAULT_NAME or utils.file_info(skins.path(data.skin)) then
@@ -6037,6 +6045,7 @@ mp.observe_property("idle-active", "native", function (_, idle)
     if idle then mp.commandv("script-message-to", "thumbfast", "clear") end
     osc_param.update_mascot()
 end)
+require("pet").on_change = function () osc_param.update_mascot() end
 
 -- a new chameleon color: the look again, the bar rebuilt with it; the start of a change is the theme's accent
 require("chameleon").setup({
