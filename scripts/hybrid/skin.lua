@@ -24,6 +24,9 @@
 --   pause_indicator  "prism" | "flash" | "static" | "no": the pause of this skin; default: hybrid.conf
 --   start_screen   "prism" | "mpv" | "no": the screen when nothing plays; start_cards 0..6 (cards of the last
 --                  videos), start_frames false: cards without frames; default: hybrid.conf
+--   pet            the skin's own pet {enabled, place, size, quiet, images} (pet.lua); default: the pet of
+--                  all skins (hybrid-pet.json)
+--   menu           the menu of the right click with this skin (a file of ~~/menus); default: menus/settings.json
 --   zones_edited - true: the hover zones are items of the skin (kind "zone"), the standard ones
 --              included (zone_bottom, zone_top, zone_volume; a deleted one does not work);
 --              otherwise the standard zones are computed and there are no own zones
@@ -198,6 +201,8 @@ local function normalize(skin)
     local cards = tonumber(skin.start_cards)
     skin.start_cards = cards and math.max(0, math.min(6, math.floor(cards))) or nil
     if skin.start_frames ~= false then skin.start_frames = nil end -- only "false" is kept
+    skin.pet = require("pet").normalize(skin.pet)
+    skin.menu = type(skin.menu) == "string" and skin.menu:match("^[%w_%-]+$") and skin.menu or nil
     -- the skin this one was copied from: "Как по умолчанию" goes back to its original
     skin.based_on = type(skin.based_on) == "string" and skin.based_on:match("^[%w_%-]+$") and skin.based_on or nil
     return skin
@@ -236,7 +241,7 @@ local KEY_ORDER = {"id", "custom", "anchor", "x", "w", "r", "bottom", "h", "prio
 local LOOK_KEYS = {"theme", "seekbar_height", "background", "bg_inset", "bg_radius", "bg_color", "bg_alpha", "glow",
                    "handle_color", "handle_border_color",
                    "volume_max", "volume_step", "volume_number", "volume_color", "volume_dir",
-                   "accent_mode", "chameleon_strength", "pause_indicator", "start_screen", "start_cards", "start_frames"}
+                   "accent_mode", "chameleon_strength", "pause_indicator", "start_screen", "start_cards", "start_frames", "pet", "menu"}
 M.LOOK_KEYS = LOOK_KEYS
 
 local function json_value(value)

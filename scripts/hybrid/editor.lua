@@ -1538,46 +1538,90 @@ volume_scale_items = function (add, back)
          end})
 end
 
+-- "Оформление" of a skin: folders, each with a short summary of what is chosen inside
+local PAUSE_SHORT = {prism = "призма", flash = "вспышка", static = "висит", no = "нет"}
+local START_SHORT = {prism = "Prism", mpv = "mpv", no = "пусто"}
+
 look_menu = function ()
     return function ()
-        local items = {}
-        local function add(title, icon, key)
-            items[#items + 1] = {title = title, icon = icon, hint = find_name(LOOK[key], ed.skin[key], tostring(ed.skin[key])),
-                                 submenu = not LOOK_COLOR_KEYS[key] and skin_choice(title, key) or nil,
-                                 action = LOOK_COLOR_KEYS[key] and look_color(title, key, M.open_look) or nil}
+        local function folder(title, icon, hint, fill)
+            return {title = title, icon = icon, hint = hint, submenu = function ()
+                local list = {}
+                local function add(name, sub_icon, key)
+                    list[#list + 1] = {title = name, icon = sub_icon,
+                        hint = find_name(LOOK[key], ed.skin[key], tostring(ed.skin[key])),
+                        submenu = not LOOK_COLOR_KEYS[key] and skin_choice(name, key) or nil,
+                        action = LOOK_COLOR_KEYS[key] and look_color(name, key, M.open_look) or nil}
+                end
+                fill(add, list)
+                return {title = title, items = list}
+            end}
         end
-        add("Цвет (тема)", "palette", "theme")
-        add("Цвет акцента", "colorize", "accent_mode")
-        if ed.skin.accent_mode ~= "theme" then add("Хамелеон", "auto_awesome", "chameleon_strength") end
-        add("Подложка", "layers", "background")
-        if ed.skin.background == "capsule" then
-            add("Отступ капсулы от краёв", "padding", "bg_inset")
-            add("Скругление капсулы", "rounded_corner", "bg_radius")
-            add("Плотность капсулы", "opacity", "bg_alpha")
-            add("Цвет капсулы", "format_color_fill", "bg_color")
-        end
-        add("Толщина полосы перемотки", "line_weight", "seekbar_height")
-        add("Свечение полосы", "flare", "glow")
-        add("Значок паузы", "pause_circle", "pause_indicator")
-        add("Стартовый экран", "home", "start_screen")
-        if ed.skin.start_screen ~= "mpv" and ed.skin.start_screen ~= "no" then
-            add("Карточки последних видео", "view_carousel", "start_cards")
-            add("Кадры на карточках", "image", "start_frames")
-        end
-        add("Цвет кружка на полосе", "radio_button_checked", "handle_color")
-        add("Обводка кружка", "trip_origin", "handle_border_color")
-        items[#items].separator = true
-        items[#items + 1] = {title = "Шкала громкости", icon = "volume_up", submenu = function ()
-            local list = {}
-            volume_scale_items(function (entry) list[#list + 1] = entry end, M.open_look)
-            return {title = "Шкала громкости", items = list}
-        end}
-        -- the pet belongs to the player, not to the skin (pet.lua)
-        local pet = require("pet").get()
-        items[#items + 1] = {title = "Питомец (во всех скинах)", icon = "pets", hint = pet.enabled and "включён" or "выключен",
-                             submenu = require("pet").menu}
+        local s = ed.skin
+        local pet = require("pet")
+        local items = {
+            folder("Цвета", "palette", (find_name(LOOK.theme, s.theme)) .. (s.accent_mode == "theme" and "" or " · хамелеон"),
+                function (add)
+                    add("Цвет (тема)", "palette", "theme")
+                    add("Цвет акцента", "colorize", "accent_mode")
+                    if s.accent_mode ~= "theme" then add("Хамелеон", "auto_awesome", "chameleon_strength") end
+                    add("Цвет кружка на полосе", "radio_button_checked", "handle_color")
+                    add("Обводка кружка", "trip_origin", "handle_border_color")
+                end),
+            folder("Панель", "layers", find_name(LOOK.background, s.background), function (add)
+                add("Подложка", "layers", "background")
+                if s.background == "capsule" then
+                    add("Отступ капсулы от краёв", "padding", "bg_inset")
+                    add("Скругление капсулы", "rounded_corner", "bg_radius")
+                    add("Плотность капсулы", "opacity", "bg_alpha")
+                    add("Цвет капсулы", "format_color_fill", "bg_color")
+                end
+                add("Толщина полосы перемотки", "line_weight", "seekbar_height")
+                add("Свечение полосы", "flare", "glow")
+            end),
+            folder("Громкость", "volume_up", find_name(LOOK.volume_max, s.volume_max), function (_, list)
+                volume_scale_items(function (entry) list[#list + 1] = entry end, M.open_look)
+            end),
+            folder("Пауза и старт", "pause_circle",
+                (PAUSE_SHORT[s.pause_indicator] or "общая") .. " · " .. (START_SHORT[s.start_screen] or "общий"),
+                function (add)
+                    add("Значок паузы", "pause_circle", "pause_indicator")
+                    add("Стартовый экран", "home", "start_screen")
+                    if s.start_screen ~= "mpv" and s.start_screen ~= "no" then
+                        add("Карточки последних видео", "view_carousel", "start_cards")
+                        add("Кадры на карточках", "image", "start_frames")
+                    end
+                end),
+            -- the skin's own pet or the pet of all skins (pet.lua)
+            {title = "Питомец", icon = "pets", submenu = pet.menu(true),
+             hint = (pet.own() and "свой" or "общий") .. " · " .. (pet.get().enabled and "вкл" or "выкл")},
+            -- the menu of the right click with this skin
+            {title = "Меню по правому клику", icon = "menu", hint = s.menu or "общее", submenu = function ()
+                local list = {{title = "Как в настройках меню", active = s.menu == nil, action = function ()
+                    push_undo()
+                    ed.skin.menu = nil
+                    return "keep"
+                end}}
+                for _, m in ipairs(require("menukit").list()) do
+                    list[#list + 1] = {title = m.name, hint = m.file, active = ed.skin.menu == m.file, action = function ()
+                        push_undo()
+                        ed.skin.menu = m.file
+                        return "keep"
+                    end}
+                end
+                return {title = "Меню по правому клику", items = list}
+            end},
+        }
         return {title = "Оформление скина", items = items}
     end
+end
+
+-- a change of the skin made from outside the editor's own menus (the pet's menu): an undo step, then the bar
+function M.change_skin(fn)
+    if not ed then return fn() end
+    push_undo()
+    fn()
+    relayout()
 end
 
 local bind, unbind

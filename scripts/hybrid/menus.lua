@@ -496,6 +496,11 @@ local function skins_menu()
                     report(ok, err, T.skin_renamed .. name)
                 end)
             end}
+        items[#items + 1] = {title = "Экспорт скина", icon = "ios_share", hint = "папка на рабочем столе",
+            action = function ()
+                local ok, err = hooks.skin_export()
+                report(ok, err, "Скин сохранён на рабочий стол: prism-skin-" .. tostring(current))
+            end}
         if current ~= "standard" then
             items[#items + 1] = {title = T.skin_archive, icon = "archive", hint = T.skin_archive_hint,
                 action = function ()
@@ -504,6 +509,8 @@ local function skins_menu()
                 end}
         end
     end
+    items[#items + 1] = {title = "Импорт скина…", icon = "download", hint = "выбери skin.json",
+        submenu = browser((mp.command_native({"expand-path", "~~desktop/"}):gsub("/", "\\"):gsub("\\$", "")), "skin")}
     return {title = T.skins, items = items}
 end
 
@@ -613,11 +620,11 @@ local function loops()
     }}
 end
 
--- file browser: mode "media" opens files, "sub" adds subtitles
+-- file browser: mode "media" opens files, "sub" adds subtitles, "skin" imports an exported skin (skin.json)
 browser = function (dir, mode)
     return function ()
         local items = {}
-        local filter = mode == "sub" and SUB_EXT or MEDIA_EXT
+        local filter = mode == "sub" and SUB_EXT or (mode == "skin" and {json = true}) or MEDIA_EXT
         local current = absolute_path(mp.get_property("path"))
         if not dir then
             for code = string.byte("A"), string.byte("Z") do
@@ -648,9 +655,13 @@ browser = function (dir, mode)
                 local full = join(dir, name)
                 local is_current = current and full:lower() == current:lower()
                 items[#items + 1] = {
-                    title = name, icon = mode == "sub" and "subtitles" or "movie", active = is_current,
+                    title = name, icon = mode == "sub" and "subtitles" or (mode == "skin" and "style") or "movie",
+                    active = is_current,
                     action = function ()
-                        if mode == "sub" then
+                        if mode == "skin" then
+                            local ok, err, name = hooks.skin_import(full)
+                            report(ok, err, "Скин добавлен: " .. tostring(name))
+                        elseif mode == "sub" then
                             mp.commandv("sub-add", full, "select")
                         else
                             mp.commandv("loadfile", full)
@@ -812,7 +823,8 @@ local CATALOG = {
      end},
     {id = "pet", group = "Prism", title = "Питомец", tile = "Питомец", icon = "pets",
      make = function ()
-         return {hint = require("pet").get().enabled and "включён" or T.off_hint, submenu = require("pet").menu}
+         local in_skin = hooks.skin_current and hooks.skin_current() == "skin"
+         return {hint = require("pet").get().enabled and "включён" or T.off_hint, submenu = require("pet").menu(in_skin)}
      end},
     {id = "editor", group = "Prism", title = T.editor, tile = "Редактор", icon = "dashboard_customize", key = "Ctrl+E",
      make = function () return {action = run("script-binding hybrid/editor")} end},
@@ -1013,7 +1025,8 @@ function M.init(renderer, skin_hooks)
     -- the right click (and Tab) open the menus chosen in the menu editor (menus/settings.json)
     mp.add_key_binding(nil, "menu", function ()
         if radial.is_open() then return radial.close() end
-        open_def((kit.load(kit.settings().right)))
+        -- a skin may have its own menu (its field "menu")
+        open_def((kit.load(hooks.skin_menu and hooks.skin_menu() or kit.settings().right)))
     end)
     mp.add_key_binding(nil, "menu2", function ()
         local second = kit.settings().second

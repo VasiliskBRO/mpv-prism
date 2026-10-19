@@ -2716,7 +2716,7 @@ local function get_skin()
         local old = current_skin.old_mascot
         current_skin.old_mascot = nil
         if old and not require("pet").decided() then
-            local pet = require("pet").get()
+            local pet = require("pet").global()
             pet.images, pet.quiet = old.images or {}, old.quiet
             require("pet").set("enabled", true)
         end
@@ -5648,6 +5648,19 @@ menus.init(menu, {
         return ok, err
     end,
     skin_list = skins.list,
+    -- the menu of the right click with this skin (its field "menu")
+    skin_menu = function () return user_opts.layout == "skin" and get_skin().menu or nil end,
+    -- one folder with the skin and all it uses (skinpack.lua)
+    skin_export = function ()
+        if user_opts.layout ~= "skin" then return false, "сначала выбери скин" end
+        local ok, err = require("skinpack").export(user_opts.skin, get_skin(), require("pet").copy(require("pet").get()))
+        return ok, not ok and err or nil
+    end,
+    skin_import = function (path)
+        local ok, file, name = require("skinpack").import(path)
+        if ok then choose_skin(file, "skin") end
+        return ok, not ok and file or nil, name
+    end,
 })
 
 -- skin editor: works on the skin that layout=skin draws
@@ -6105,6 +6118,16 @@ mp.observe_property("idle-active", "native", function (_, idle)
     osc_param.update_mascot()
 end)
 require("pet").on_change = function () osc_param.update_mascot() end
+-- a skin may have its own pet: its field "pet"; changed in the editor (an undo step) or saved to the skin's file
+require("pet").hooks = {
+    skin_pet = function () return user_opts.layout == "skin" and not state.is_image and get_skin().pet or nil end,
+    set_skin_pet = function (p) get_skin().pet = p end,
+    skin_edit = function (fn)
+        if state.skin_editing then return editor.change_skin(fn) end
+        fn()
+        skins.save(user_opts.skin, get_skin())
+    end,
+}
 require("start").on_layout = function () osc_param.update_mascot() end
 
 -- a new chameleon color: the look again, the bar rebuilt with it; the start of a change is the theme's accent
