@@ -168,6 +168,7 @@ local user_opts = {
     title_color = "#FFFFFF",               -- color of the title
     cache_info_color = "#FFFFFF",          -- color of the cache information
     seekbar_cache_color = "#B1B1B1",       -- color of the cache ranges on the seekbar
+    chameleon = true,                      -- the accent follows the colors of the video (a skin may decide itself)
     seekbarfg_color = "#FF8232",           -- color of the seekbar progress
     seekbarbg_color = "#999999",           -- color of the remaining seekbar
     seek_handle_color = "#C96508",         -- color of the seekbar handle
@@ -470,7 +471,7 @@ local language = {
         pip = "Picture-in-picture",
         pip_exit = "Exit picture-in-picture",
         speed_hint = "Speed (wheel, drag; right click: 1×)",
-        volume_hint = "Volume (wheel, drag; right click: 100)",
+        volume_hint = "Wheel · right click — 100%",
         resumed = "Resumed from",
         from_start = "From the start",
     },
@@ -513,7 +514,7 @@ local language = {
         pip = "Картинка в картинке",
         pip_exit = "Выйти из «картинки в картинке»",
         speed_hint = "Скорость (колесо, перетаскивание; ПКМ — 1×)",
-        volume_hint = "Громкость (колесо, перетаскивание; ПКМ — 100)",
+        volume_hint = "Колесо · ПКМ — 100%",
         resumed = "Продолжено с",
         from_start = "С начала",
     },
@@ -1206,6 +1207,7 @@ end
 
 local function render_wipe(osd)
     msg.trace("render_wipe()")
+    if osd == state.osd then menu.icons.clear("bar") end -- own PNG icons of the bar go with it
     osd.data = "" -- allows set_osd to immediately update on enable
     osd:remove()
 end
@@ -1979,6 +1981,16 @@ local function render_elements(master_ass)
                 buttontext = element.content -- text objects
             end
 
+            -- an own PNG icon: an overlay at the button's middle while the bar is (nearly) opaque
+            if element.png_icon and element.hitbox and (anim_override or 0) < 0x90 then
+                local sx, sy = get_virt_scale_factor()
+                if sx > 0 and sy > 0 then
+                    local h = element.hitbox
+                    menu.icons.png("bar", element.png_icon, (h.x1 + h.x2) / 2 / sx, (h.y1 + h.y2) / 2 / sy,
+                        element.png_size / sy)
+                end
+            end
+
             -- add hover effects
             local button_lo = element.layout.button
             local is_clickable = element.eventresponder and (element.eventresponder["mbtn_left_down"] ~= nil or element.eventresponder["mbtn_left_up"] ~= nil)
@@ -2317,56 +2329,90 @@ local function window_controls()
     end
 end
 
--- Volume widget (uosc style): vertical slider at the screen edge, shown when the cursor comes close
+-- the volume scale of the skin (editor: properties of the volume widget), filled in next to get_skin():
+-- volume_skin.get() -> {max, step, number, color, horizontal}
+local volume_skin = {}
+
+-- Volume widget (uosc style): vertical slider at the screen edge, shown when the cursor comes close;
+-- the skin may lay it horizontally: the speaker button on the left, the track, the value on the right
 local function volume_layout()
     if not elements["vol_slider"] then return end
     if user_opts.volume_widget == "no" or state.audio_track_count == 0 or state.is_image then return end
 
     local W, H = osc_param.playresx, osc_param.playresy
+    local look = volume_skin.get()
     local size = user_opts.volume_size
     local top_y = window_controls_enabled() and 50 or 0
     local bottom_y = H - osc_param.video_margins.b * H
     local side = user_opts.volume_widget
-    local x1, y1, y2
+    local x1, y1, x2, y2
     local sv = osc_param.skin_volume
-    if sv then
+    if sv and look.horizontal then
+        -- the skin item's box: its height is the thickness, its width the length
+        size = math.max(12, sv.y2 - sv.y1)
+        x1, y1, y2 = sv.x1, sv.y1, sv.y1 + size
+        x2 = math.max(sv.x2, sv.x1 + size * 2 + 40)
+        side = (sv.x1 + sv.x2) / 2 < W / 2 and "left" or "right"
+    elseif sv then
         -- the skin has the widget as an item ("volume"): its box is the slider plus the mute button
         size = math.max(12, sv.x2 - sv.x1)
         x1, y1, y2 = sv.x1, sv.y1, math.max(sv.y2, sv.y1 + size * 2 + 30)
+        x2 = x1 + size
         side = (sv.x1 + sv.x2) / 2 < W / 2 and "left" or "right"
+    elseif look.horizontal then
+        -- lying at the screen edge, in the middle of its height
+        local width = math.floor(math.min(size * 6, W * 0.4))
+        if width < size * 3 then return end -- window too small
+        local margin = math.floor(size / 2)
+        x1 = side == "left" and margin or (W - margin - width)
+        x2 = x1 + width
+        y1 = top_y + math.floor((bottom_y - top_y - size) / 2)
+        y2 = y1 + size
     else
         local available = bottom_y - top_y
         local height = math.floor(math.min(size * 8, available * 0.8))
         if height < size * 3 then return end -- window too small
         local margin = math.floor(size / 2)
         x1 = side == "left" and margin or (W - margin - size)
+        x2 = x1 + size
         y1 = top_y + math.floor((available - height) / 2)
         y2 = y1 + height
     end
-    osc_param.volume_rect = {x1 = x1, y1 = y1, x2 = x1 + size, y2 = y2}
-    -- one capsule: the value on top (26 px), the track, the speaker button at the bottom
-    local slider_y1 = y1 + 26
-    local slider_y2 = y2 - size - 2
+    osc_param.volume_rect = {x1 = x1, y1 = y1, x2 = x2, y2 = y2}
 
     local lo = add_layout("vol_slider")
-    lo.geometry = {x = x1, y = slider_y1, an = 7, w = size, h = slider_y2 - slider_y1}
+    if look.horizontal then
+        -- one capsule: the speaker button on the left, the track, the value on the right (34 px)
+        local slider_x1 = x1 + size + 2
+        local slider_x2 = x2 - (look.number and 38 or 6)
+        lo.geometry = {x = slider_x1, y = y1, an = 7, w = slider_x2 - slider_x1, h = size}
+    else
+        -- one capsule: the value on top (26 px), the track, the speaker button at the bottom
+        local slider_y1 = y1 + (look.number and 26 or 4)
+        local slider_y2 = y2 - size - 2
+        lo.geometry = {x = x1, y = slider_y1, an = 7, w = size, h = slider_y2 - slider_y1}
+    end
     lo.group = "vol"
     lo.layer = 60
-    lo.vol_card = {x1 = x1, y1 = y1, x2 = x1 + size, y2 = y2}
+    lo.vol_card = {x1 = x1, y1 = y1, x2 = x2, y2 = y2}
 
     lo = add_layout("vol_mute")
-    lo.geometry = {x = x1 + size / 2, y = y2 - size / 2, an = 5, w = 24, h = 24}
+    if look.horizontal then
+        lo.geometry = {x = x1 + size / 2 + 2, y = y1 + size / 2, an = 5, w = 24, h = 24}
+    else
+        lo.geometry = {x = x1 + size / 2, y = y2 - size / 2, an = 5, w = 24, h = 24}
+    end
     lo.style = osc_styles.control_3
     lo.group = "vol"
     lo.layer = 60
 
     -- the proximity zone must not overlap the bottom/top show zones (separate input sections)
     local zone_x1 = side == "left" and 0 or math.min(x1, W - size * 3.5)
-    local zone_x2 = side == "left" and math.max(x1 + size, size * 3.5) or W
+    local zone_x2 = side == "left" and math.max(x2, size * 3.5) or W
     local zone_y1 = osc_param.areas["showhide_wc"] and osc_param.areas["showhide_wc"][1].y2 or 0
     local zone_y2 = osc_param.areas["showhide"] and osc_param.areas["showhide"][1].y1 or bottom_y
     add_area("showhide_vol", zone_x1, zone_y1, zone_x2, zone_y2)
-    add_area("input_vol", x1 - 8, y1 - 8, x1 + size + 8, y2 + 8)
+    add_area("input_vol", x1 - 8, y1 - 8, x2 + 8, y2 + 8)
 end
 
 --
@@ -2662,6 +2708,51 @@ local apply_skin_look -- skin colors / seekbar thickness over hybrid.conf, set u
 local function get_skin()
     if not current_skin then current_skin = skins.load(user_opts.skin) end
     return current_skin
+end
+
+function volume_skin.get()
+    local skin = (user_opts.layout == "skin" and not state.is_image) and get_skin() or {}
+    return {
+        max = skin.volume_max, -- applied to mpv's volume-max by apply_skin_look()
+        step = skin.volume_step or user_opts.volume_step,
+        number = skin.volume_number ~= false,
+        color = skin.volume_color,
+        horizontal = skin.volume_dir == "horizontal",
+    }
+end
+
+-- the mascot of the skin (an item {kind = "mascot"}, mascot.lua): which state it is in, where it lives.
+-- Called when the bar is rebuilt or shown/hidden, on pause, at the end, when nothing plays, around menus
+osc_param.update_mascot = function ()
+    local mascot = require "mascot"
+    local item
+    if user_opts.layout == "skin" and not state.is_image then
+        for _, it in ipairs(get_skin().items) do
+            if it.custom and it.custom.kind == "mascot" then item = it break end
+        end
+    end
+    local W, H = osc_param.playresx, osc_param.playresy
+    if not item or not W or W <= 0 or (state.menu_open and not state.skin_editing) then return mascot.update(nil) end
+    local w = item.w or 64
+    local x1 = item.anchor == "left" and item.x or (item.anchor == "center" and W / 2 + item.x)
+        or (item.anchor == "stretch" and item.x) or W + item.x
+    local y2 = H - item.bottom
+    local st
+    if state.skin_editing then
+        st = "sit"
+    elseif mp.get_property_native("idle-active") then
+        st = "sleep"
+    elseif mp.get_property_native("eof-reached") then
+        st = "wave"
+    elseif mp.get_property_native("pause") then
+        st = "peek"
+    elseif state.osc_visible and not item.custom.quiet then
+        st = "sit"
+    end
+    local sx, sy = get_virt_scale_factor()
+    mascot.update({rect = {x1 = x1, y1 = y2 - item.h, x2 = x1 + w, y2 = y2}, res_x = W, res_y = H, state = st,
+                   accent = user_opts.seekbarfg_color, images = item.custom.images,
+                   sx = sx > 0 and sx or 1, sy = sy > 0 and sy or 1})
 end
 
 -- button styles by element; everything not listed is a side button (control_3)
@@ -3091,6 +3182,8 @@ layouts["skin"] = function ()
                 lo.style = id == "time_codes" and osc_styles.time or osc_styles.cache
             elseif id == "speed_ruler" then
                 lo = place(id, 5, e)
+            elseif e.item.custom and e.item.custom.kind == "mascot" then
+                lo = place(id, 5, e)
             elseif e.item.custom and e.item.custom.kind == "plate" then
                 lo = place(id, 5, e)
                 lo.layer = 12
@@ -3236,6 +3329,7 @@ end
 
 local function osc_visible(visible)
     set_bar_visible("osc_visible", visible)
+    osc_param.update_mascot()
 end
 
 local function wc_visible(visible)
@@ -4001,7 +4095,12 @@ local function osc_init()
     -- the track runs between the handle's centers at 0 and 100%: VOL_INSET from the hitbox ends
     local VOL_INSET = 8
     local function volume_from_mouse(element)
-        local _, mouse_y = get_virt_mouse_pos()
+        local mouse_x, mouse_y = get_virt_mouse_pos()
+        if volume_skin.get().horizontal then
+            local x1, x2 = element.hitbox.x1 + VOL_INSET, element.hitbox.x2 - VOL_INSET
+            set_volume_value((mouse_x - x1) / (x2 - x1) * volume_max())
+            return
+        end
         local y1, y2 = element.hitbox.y1 + VOL_INSET, element.hitbox.y2 - VOL_INSET
         set_volume_value((y2 - mouse_y) / (y2 - y1) * volume_max())
     end
@@ -4010,7 +4109,9 @@ local function osc_init()
     ne.enabled = state.audio_track_count > 0
     ne.draw = function (element, ass, anim)
         local x1, y1, x2, y2 = get_element_hitbox(element)
-        local cx = (x1 + x2) / 2
+        local look = volume_skin.get()
+        local horizontal = look.horizontal
+        local cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
         local vmax = volume_max()
         local volume = state.volume or 0
         local active = element.state.pressed or mouse_hit(element)
@@ -4020,61 +4121,87 @@ local function osc_init()
             ass:round_rect_cw(x - r, y - r, x + r, y + r, r)
             ass:draw_stop()
         end
+        -- a bar along the track from a to b (0..1 of its length), tw thick
+        local tw = active and 8 or 6
+        local ta, tb = horizontal and x1 + VOL_INSET or y2 - VOL_INSET, horizontal and x2 - VOL_INSET or y1 + VOL_INSET
+        local function at(f) return ta + (tb - ta) * f end
+        local function bar(a, b, thick)
+            local p, q = math.min(at(a), at(b)), math.max(at(a), at(b))
+            ass:draw_start()
+            if horizontal then
+                ass:round_rect_cw(p, cy - thick / 2, q, cy + thick / 2, thick / 2)
+            else
+                ass:round_rect_cw(cx - thick / 2, p, cx + thick / 2, q, thick / 2)
+            end
+            ass:draw_stop()
+        end
 
         -- one glass capsule around the number, the track and the speaker button
         custom_layer(ass, element, anim, user_opts.osc_color, 0x48)
         ass:draw_start()
-        ass:round_rect_cw(card.x1, card.y1, card.x2, card.y2, math.min(18, (card.x2 - card.x1) / 2))
+        ass:round_rect_cw(card.x1, card.y1, card.x2, card.y2,
+            math.min(18, (math.min(card.x2 - card.x1, card.y2 - card.y1)) / 2))
         ass:draw_stop()
 
         -- thin track like the seekbar, a bit thicker under the mouse
-        local tw = active and 8 or 6
-        local ty1, ty2 = y1 + VOL_INSET, y2 - VOL_INSET
-        local fill_y = ty2 - (ty2 - ty1) * math.min(volume / vmax, 1)
+        local fill = math.min(volume / vmax, 1)
         custom_layer(ass, element, anim, "#FFFFFF", 0xC8)
-        ass:draw_start()
-        ass:round_rect_cw(cx - tw / 2, ty1, cx + tw / 2, ty2, tw / 2)
-        ass:draw_stop()
-        local fill_color = user_opts.volumebar_match_seek_color and user_opts.seekbarfg_color or user_opts.side_buttons_color
+        bar(0, 1, tw)
+        local fill_color = look.color
+            or (user_opts.volumebar_match_seek_color and user_opts.seekbarfg_color or user_opts.side_buttons_color)
         if volume > 0 then
             custom_layer(ass, element, anim, state.mute and "#8A8A8A" or fill_color, 0)
-            ass:draw_start()
-            ass:round_rect_cw(cx - tw / 2, fill_y, cx + tw / 2, ty2, tw / 2)
-            ass:draw_stop()
+            bar(0, fill, tw)
         end
 
         -- 100% mark when volume-max is above 100
         if vmax > 100 then
-            local y100 = ty2 - (ty2 - ty1) * (100 / vmax)
+            local m = at(100 / vmax)
             custom_layer(ass, element, anim, "#FFFFFF", 0x50)
             ass:draw_start()
-            ass:rect_cw(cx - tw / 2 - 5, y100 - 1, cx + tw / 2 + 5, y100 + 1)
+            if horizontal then
+                ass:rect_cw(m - 1, cy - tw / 2 - 5, m + 1, cy + tw / 2 + 5)
+            else
+                ass:rect_cw(cx - tw / 2 - 5, m - 1, cx + tw / 2 + 5, m + 1)
+            end
             ass:draw_stop()
         end
 
         -- handle in the seekbar handle colors (the skin's "Цвет кружка"), grey when muted
+        local hx, hy = horizontal and at(fill) or cx, horizontal and cy or at(fill)
         local r = active and 8 or 7
         local border = user_opts.seek_handle_border_color
         local inner = r
         if border ~= "" and not state.mute then
             custom_layer(ass, element, anim, border, 0)
-            circle(cx, fill_y, r)
+            circle(hx, hy, r)
             inner = r - 2
         end
         custom_layer(ass, element, anim, state.mute and "#BBBBBB" or user_opts.seek_handle_color, 0)
-        circle(cx, fill_y, inner)
+        circle(hx, hy, inner)
 
-        -- the value above the track: accent over 100%, dim when muted
-        local text = tostring(math.floor(volume + 0.5))
-        local color = state.mute and "#8A8A8A" or (volume > 100 and user_opts.seekbarfg_color or "#FFFFFF")
-        custom_text(ass, element, anim, cx, card.y1 + 15, 5, text, 14, color, "\\bord0")
+        -- the value above (or right of) the track: accent over 100%, dim when muted
+        if look.number then
+            local text = tostring(math.floor(volume + 0.5))
+            local color = state.mute and "#8A8A8A" or (volume > 100 and user_opts.seekbarfg_color or "#FFFFFF")
+            if horizontal then
+                custom_text(ass, element, anim, card.x2 - 20, cy, 5, text, 14, color, "\\bord0")
+            else
+                custom_text(ass, element, anim, cx, card.y1 + 15, 5, text, 14, color, "\\bord0")
+            end
+        end
 
-        -- hint next to the slider
+        -- hint next to the slider (under it when it lies)
         if mouse_hit(element) and not element.state.pressed and user_opts.tooltip_hints then
-            local _, mouse_y = get_virt_mouse_pos()
+            local mouse_x, mouse_y = get_virt_mouse_pos()
             local tw = estimate_text_width(locale.volume_hint, osc_styles.tooltip)
-            local tx = user_opts.volume_widget == "left" and (x2 + 14 + tw / 2) or (x1 - 14 - tw / 2)
-            draw_tooltip(ass, tx, mouse_y + user_opts.tooltip_font_size / 2, tw, osc_styles.tooltip, locale.volume_hint)
+            if horizontal then
+                local tx = math.max(tw / 2 + 4, math.min(osc_param.playresx - tw / 2 - 4, mouse_x))
+                draw_tooltip(ass, tx, card.y2 + 14 + user_opts.tooltip_font_size, tw, osc_styles.tooltip, locale.volume_hint)
+            else
+                local tx = user_opts.volume_widget == "left" and (x2 + 14 + tw / 2) or (x1 - 14 - tw / 2)
+                draw_tooltip(ass, tx, mouse_y + user_opts.tooltip_font_size / 2, tw, osc_styles.tooltip, locale.volume_hint)
+            end
         end
     end
     ne.eventresponder["mbtn_left_down"] = function (element)
@@ -4090,8 +4217,8 @@ local function osc_init()
         mp.set_property_native("mute", false)
         mp.set_property_native("volume", 100)
     end
-    ne.eventresponder["wheel_up_press"] = function () set_volume_value(state.volume + user_opts.volume_step) end
-    ne.eventresponder["wheel_down_press"] = function () set_volume_value(state.volume - user_opts.volume_step) end
+    ne.eventresponder["wheel_up_press"] = function () set_volume_value(state.volume + volume_skin.get().step) end
+    ne.eventresponder["wheel_down_press"] = function () set_volume_value(state.volume - volume_skin.get().step) end
 
     ne = new_element("vol_mute", "button")
     ne.enabled = state.audio_track_count > 0
@@ -4101,14 +4228,18 @@ local function osc_init()
     end
     ne.eventresponder["mbtn_left_up"] = function () mp.commandv("cycle", "mute") end
     ne.eventresponder["mbtn_right_up"] = function () mp.command("script-binding hybrid/audio-device") end
-    ne.eventresponder["wheel_up_press"] = function () set_volume_value(state.volume + user_opts.volume_step) end
-    ne.eventresponder["wheel_down_press"] = function () set_volume_value(state.volume - user_opts.volume_step) end
+    ne.eventresponder["wheel_up_press"] = function () set_volume_value(state.volume + volume_skin.get().step) end
+    ne.eventresponder["wheel_down_press"] = function () set_volume_value(state.volume - volume_skin.get().step) end
 
     -- objects made in the skin editor: buttons with an icon and text labels
     if user_opts.layout == "skin" then
         for _, item in ipairs(get_skin().items) do
             local custom = item.custom
-            if custom and custom.kind == "plate" and item.id:match("^custom_") then
+            if custom and custom.kind == "mascot" and item.id:match("^custom_") then
+                -- the mascot draws itself (mascot.lua); the element only keeps its box for the editor
+                ne = new_element(item.id, "custom")
+                ne.draw = function () end
+            elseif custom and custom.kind == "plate" and item.id:match("^custom_") then
                 -- a rounded plate under other items (no clicks): color, transparency, corner radius
                 local radius, color = item.radius, item.color or "#121218"
                 ne = new_element(item.id, "custom")
@@ -4124,6 +4255,17 @@ local function osc_init()
                 ne = new_element(item.id, "button")
                 ne.content = custom.kind == "text" and mp.command_native({"escape-ass", custom.text or ""})
                     or (custom.icon or "radio_button_unchecked")
+                -- own icons (icons.lua): SVG as a drawing in the button's color, PNG as an overlay picture
+                local kind = custom.kind ~= "text" and menu.icons.kind(custom.icon)
+                if kind == "svg" then
+                    local name, size = custom.icon, item.size or 24
+                    ne.content = function ()
+                        return "{\\p1}" .. (menu.icons.drawing_local(name, size) or "") .. "{\\p0}"
+                    end
+                elseif kind == "png" then
+                    ne.content = ""
+                    ne.png_icon, ne.png_size = custom.icon, item.size or 24
+                end
             end
         end
     end
@@ -4164,6 +4306,7 @@ local function osc_init()
 
     prepare_elements()
     update_margins()
+    osc_param.update_mascot()
 end
 
 local function show_wc()
@@ -4538,6 +4681,7 @@ end
 
 local function render()
     msg.trace("rendering")
+    menu.icons.begin("bar") -- own PNG icons on the bar are overlays, collected while drawing
     local current_screen_sizeX = state.osd_dimensions.w
     local current_screen_sizeY = state.osd_dimensions.h
     local mouseX, mouseY = get_virt_mouse_pos()
@@ -4759,6 +4903,7 @@ local function render()
 
     -- submit
     set_osd(state.osd, osc_param.playresy * osc_param.display_aspect, osc_param.playresy, ass.text, 1000)
+    menu.icons.flush("bar", request_tick)
 end
 
 -- called by mpv on every frame
@@ -4800,7 +4945,12 @@ tick = function()
             ass:pos(display_w / 2, icon_y + 65)
             ass:an(8)
             ass:append("{\\fs24\\1c&HFFFFFF&}" .. locale.idle)
-            set_osd(state.logo_osd, display_w, display_h, ass.text, -1000)
+            -- the logo and "drop a file here" would show through the open menu
+            if state.menu_open then
+                render_wipe(state.logo_osd)
+            else
+                set_osd(state.logo_osd, display_w, display_h, ass.text, -1000)
+            end
         end
 
         if state.osc_visible then
@@ -5333,6 +5483,14 @@ end
 
 mp.add_key_binding(nil, "pip", toggle_pip)
 
+-- arrows / wheel over the video (input.conf): the volume step of the skin, no "Volume: N%" text
+mp.add_key_binding(nil, "volume-up", function ()
+    mp.commandv("no-osd", "add", "volume", tostring(volume_skin.get().step))
+end, {repeatable = true})
+mp.add_key_binding(nil, "volume-down", function ()
+    mp.commandv("no-osd", "add", "volume", tostring(-volume_skin.get().step))
+end, {repeatable = true})
+
 --
 -- Hybrid: menus (uosc behaviour, ModernZ look)
 --
@@ -5370,6 +5528,7 @@ local function osc_suspend(suspend)
             show_wc()
         end
     end
+    osc_param.update_mascot()
     request_tick()
 end
 
@@ -5826,21 +5985,40 @@ local base_look, applied_look = {}, nil
 
 local function remember_base_look()
     for _, key in ipairs(LOOK_OPTS) do base_look[key] = user_opts[key] end
+    -- volume-max of mpv.conf, before any skin changed it
+    base_look.volume_max = base_look.volume_max or mp.get_property_number("volume-max")
     applied_look = nil
 end
 
 apply_skin_look = function ()
     local skin = (user_opts.layout == "skin" and not state.is_image) and get_skin() or {}
-    local key = table.concat({skin.theme or "", skin.seekbar_height or "",
-                              skin.handle_color or "", skin.handle_border_color or ""}, "|")
+    -- chameleon (chameleon.lua): the accent follows the video. The skin decides (accent_mode), a skin with its
+    -- own theme keeps it, otherwise hybrid.conf's chameleon=yes/no
+    local chameleon = require "chameleon"
+    local mode = skin.accent_mode or (skin.theme and "theme") or (user_opts.chameleon and "video" or "theme")
+    chameleon.set_enabled(mode == "video" and not state.is_image, skin.chameleon_strength)
+    local tint = chameleon.color()
+    local key = table.concat({skin.theme or "", skin.seekbar_height or "", skin.handle_color or "",
+                              skin.handle_border_color or "", skin.volume_max or "", tint or ""}, "|")
     if key == applied_look then return end
     applied_look = key
+    -- the top of the volume scale: the skin's one or mpv.conf's
+    local vmax = skin.volume_max or base_look.volume_max
+    if vmax and vmax ~= mp.get_property_number("volume-max") then mp.set_property_number("volume-max", vmax) end
     for _, k in ipairs(LOOK_OPTS) do user_opts[k] = base_look[k] end
     if skin.theme and THEMES[skin.theme] then
         user_opts.theme = skin.theme
         apply_theme()
     end
     if skin.seekbar_height then user_opts.seekbar_height = skin.seekbar_height end
+    -- the color of the video over the theme's accent (own handle colors of the skin still win)
+    if tint then
+        user_opts.seekbarfg_color = tint
+        user_opts.hover_effect_color = tint
+        user_opts.nibble_color = tint
+        user_opts.seek_handle_color = chameleon.shade(tint, 0.7)
+        user_opts.seek_handle_border_color = chameleon.shade(tint, 1.25)
+    end
     -- the seekbar handle may have its own colors, over the theme
     if skin.handle_color then user_opts.seek_handle_color = skin.handle_color end
     if skin.handle_border_color then
@@ -5849,6 +6027,30 @@ apply_skin_look = function ()
     set_osc_styles()
     menu.setup({accent = user_opts.seekbarfg_color, font = user_opts.font})
 end
+
+-- the mascot reacts to pause, the end of a file and the idle screen (no loop: its variables would count
+-- against the 200 locals of this chunk)
+mp.observe_property("pause", "native", function () osc_param.update_mascot() end)
+mp.observe_property("eof-reached", "native", function () osc_param.update_mascot() end)
+mp.observe_property("idle-active", "native", function (_, idle)
+    -- nothing plays: a frame preview left from the last file would hang in the middle of the screen
+    if idle then mp.commandv("script-message-to", "thumbfast", "clear") end
+    osc_param.update_mascot()
+end)
+
+-- a new chameleon color: the look again, the bar rebuilt with it; the start of a change is the theme's accent
+require("chameleon").setup({
+    on_color = function ()
+        applied_look = nil
+        apply_skin_look()
+        request_init()
+    end,
+    base = function ()
+        local skin = (user_opts.layout == "skin") and get_skin() or {}
+        local theme = THEMES[skin.theme or ""] or THEMES[base_look.theme or ""]
+        return theme and theme[1] or base_look.seekbarfg_color
+    end,
+})
 
 local function validate_user_opts()
     apply_theme()

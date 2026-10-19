@@ -1,0 +1,27 @@
+{
+  "name": "Жилец",
+  "height": 128,
+  "background": "capsule",
+  "bg_inset": 24,
+  "bg_radius": 22,
+  "bg_color": "#121218",
+  "bg_alpha": 36,
+  "items": [
+    {"id": "title", "anchor": "stretch", "x": 48, "r": 168, "bottom": 94, "h": 22, "size": 18},
+    {"id": "time_codes", "anchor": "right", "x": -150, "w": 102, "bottom": 96, "h": 16},
+    {"id": "seekbar", "anchor": "stretch", "x": 44, "r": 44, "bottom": 70, "h": 16},
+    {"id": "menu", "anchor": "left", "x": 48, "w": 24, "bottom": 36, "h": 24, "priority": 6},
+    {"id": "sub_track", "anchor": "left", "x": 88, "w": 24, "bottom": 36, "h": 24, "priority": 5},
+    {"id": "playlist_prev", "anchor": "center", "x": -124, "w": 28, "bottom": 36, "h": 24, "priority": 10},
+    {"id": "jump_backward", "anchor": "center", "x": -76, "w": 28, "bottom": 36, "h": 24, "priority": 10},
+    {"id": "play_pause", "anchor": "center", "x": -20, "w": 40, "bottom": 28, "h": 40, "priority": 10, "color": "#121218", "bg": "circle", "bg_color": "#FFFFFF"},
+    {"id": "jump_forward", "anchor": "center", "x": 48, "w": 28, "bottom": 36, "h": 24, "priority": 10},
+    {"id": "playlist_next", "anchor": "center", "x": 96, "w": 28, "bottom": 36, "h": 24, "priority": 10},
+    {"id": "speed", "anchor": "right", "x": -256, "w": 42, "bottom": 36, "h": 24, "priority": 2},
+    {"id": "file_loop", "anchor": "right", "x": -192, "w": 24, "bottom": 36, "h": 24, "priority": 4},
+    {"id": "playlist", "anchor": "right", "x": -152, "w": 24, "bottom": 36, "h": 24, "priority": 7},
+    {"id": "pip", "anchor": "right", "x": -112, "w": 24, "bottom": 36, "h": 24, "priority": 8},
+    {"id": "fullscreen", "anchor": "right", "x": -72, "w": 24, "bottom": 36, "h": 24, "priority": 9},
+    {"id": "custom_mascot", "custom": {"kind": "mascot"}, "anchor": "right", "x": -196, "w": 72, "bottom": 128, "h": 72}
+  ]
+}

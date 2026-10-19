@@ -12,6 +12,15 @@
 --     glow           true: the played part of the seekbar glows in the accent color
 --     handle_color   color of the seekbar handle "#RRGGBB" (default: from the theme)
 --     handle_border_color  its inner border "#RRGGBB", "none" - no border (default: from the theme)
+--   volume scale (the volume widget):
+--     volume_max     top of the scale in % (sets mpv's volume-max), default: from mpv.conf
+--     volume_step    % per wheel tick / arrow key, default: volume_step of hybrid.conf
+--     volume_number  false: no value next to the track
+--     volume_color   fill of the track "#RRGGBB", default: the theme color
+--     volume_dir     "horizontal": the widget lies (its item's h is the thickness), default: upright
+--   accent_mode    "video" (chameleon: the accent follows the video) | "theme"; default: a skin with its own
+--                  theme keeps it, otherwise chameleon=yes/no of hybrid.conf
+--   chameleon_strength  "vivid": the colors of the video as they are; default: soft
 --   zones_edited - true: the hover zones are items of the skin (kind "zone"), the standard ones
 --              included (zone_bottom, zone_top, zone_volume; a deleted one does not work);
 --              otherwise the standard zones are computed and there are no own zones
@@ -42,6 +51,8 @@
 --             hover zones (id "zone_*"): {kind = "zone", name = "..."}
 --             plates (id "custom_N"): {kind = "plate"} - a rounded plate under other items;
 --             color, alpha and radius (corner radius, nil = round ends) set its look
+--             the mascot (id "custom_*"): {kind = "mascot", images = {sit, peek, sleep, wave = "file:..."},
+--             quiet = true} - lives on the bar (mascot.lua); without images it is the built-in "Призмочка"
 --   bg, bg_color, bg_alpha  bg = "circle": a round plate behind a button; font - font of a text item
 --   based_on  (skin level) the skin this one was copied from, for "Как по умолчанию";
 --             shipped originals live in skins/defaults/<name>.json
@@ -129,6 +140,15 @@ local function normalize(skin)
                     icon = type(item.custom.icon) == "string" and item.custom.icon or nil,
                     text = type(item.custom.text) == "string" and item.custom.text or nil,
                     name = type(item.custom.name) == "string" and item.custom.name or nil}
+            elseif kind == "mascot" then
+                -- the mascot (mascot.lua): own pictures per state, quiet = not shown while playing
+                local images = {}
+                for _, st in ipairs({"sit", "peek", "sleep", "wave"}) do
+                    local v = type(item.custom.images) == "table" and item.custom.images[st]
+                    if type(v) == "string" and v ~= "" then images[st] = v end
+                end
+                item.custom = {kind = "mascot", images = next(images) and images or nil,
+                               quiet = item.custom.quiet == true or nil}
             else
                 item.custom = nil
             end
@@ -165,6 +185,15 @@ local function normalize(skin)
     if type(skin.handle_color) ~= "string" or not skin.handle_color:match("^#%x%x%x%x%x%x$") then skin.handle_color = nil end
     local hbc = skin.handle_border_color
     if type(hbc) ~= "string" or not (hbc == "none" or hbc:match("^#%x%x%x%x%x%x$")) then skin.handle_border_color = nil end
+    local vmax = tonumber(skin.volume_max)
+    skin.volume_max = vmax and math.max(10, math.min(1000, math.floor(vmax))) or nil
+    local vstep = tonumber(skin.volume_step)
+    skin.volume_step = vstep and vstep > 0 and math.min(50, vstep) or nil
+    if skin.volume_number ~= false then skin.volume_number = nil end -- only "false" is kept
+    if type(skin.volume_color) ~= "string" or not skin.volume_color:match("^#%x%x%x%x%x%x$") then skin.volume_color = nil end
+    skin.volume_dir = skin.volume_dir == "horizontal" and "horizontal" or nil
+    skin.accent_mode = (skin.accent_mode == "video" or skin.accent_mode == "theme") and skin.accent_mode or nil
+    skin.chameleon_strength = skin.chameleon_strength == "vivid" and "vivid" or nil
     -- the skin this one was copied from: "Как по умолчанию" goes back to its original
     skin.based_on = type(skin.based_on) == "string" and skin.based_on:match("^[%w_%-]+$") and skin.based_on or nil
     return skin
@@ -201,7 +230,9 @@ end
 local KEY_ORDER = {"id", "custom", "anchor", "x", "w", "r", "bottom", "h", "priority", "hide_below", "collapse",
                    "size", "color", "hover", "alpha", "font", "bg", "bg_color", "bg_alpha", "radius", "pad", "show_in", "tooltip", "actions"}
 local LOOK_KEYS = {"theme", "seekbar_height", "background", "bg_inset", "bg_radius", "bg_color", "bg_alpha", "glow",
-                   "handle_color", "handle_border_color"}
+                   "handle_color", "handle_border_color",
+                   "volume_max", "volume_step", "volume_number", "volume_color", "volume_dir",
+                   "accent_mode", "chameleon_strength"}
 M.LOOK_KEYS = LOOK_KEYS
 
 local function json_value(value)

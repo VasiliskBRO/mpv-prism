@@ -78,6 +78,17 @@ local T = {
     quality = "Качество",
     quality_loading = "Узнаю доступные качества…",
     quality_none = "Качество меняется только у стримов и онлайн-видео",
+    open_url = "Открыть ссылку…",
+    url_prompt = "Ссылка или путь к файлу:",
+    url_opening = "Открываю: ",
+    url_queued = "Добавлено в плейлист: ",
+    url_none = "В буфере обмена нет ссылки или пути к файлу",
+    tile_file = "Файл",
+    tile_link = "Ссылка",
+    now_playing = "СЕЙЧАС ИГРАЕТ",
+    more = "Ещё",
+    more_hint = "повтор, экран, звук…",
+    editor_short = "Редактор",
 }
 
 local LANGS = {
@@ -393,6 +404,57 @@ local function ask_text(prompt, default, done)
     end})
 end
 
+-- links: Ctrl+V opens a link or a file path from the clipboard at once, Ctrl+Shift+V queues it
+
+-- a pasted text -> something mpv can open, or nil: the first non-empty line without quotes and
+-- spaces around it; "youtube.com/..." without a scheme gets https://
+local function clean_link(text)
+    if type(text) ~= "string" then return nil end
+    local line = text:match("^%s*([^\r\n]+)")
+    if not line then return nil end
+    line = line:gsub("^%s+", ""):gsub("%s+$", "")
+    -- quotes around (also « » — those are two bytes each, so not in a [...] class)
+    local before
+    repeat
+        before = line
+        line = line:gsub("^[\"'<]", ""):gsub("[\"'>]$", ""):gsub("^«", ""):gsub("»$", "")
+    until line == before
+    if line == "" then return nil end
+    if is_url(line) then return line end
+    if line:find("^[%w-]+%.[%w.-]+/") or line:find("^www%.") then return "https://" .. line end
+    local path = line:gsub("^file:///", "")
+    if utils.file_info(path) then return path end
+    return nil
+end
+
+local function short(link)
+    return #link > 70 and (link:sub(1, 67) .. "...") or link
+end
+
+local function open_link(text, queue)
+    local link = clean_link(text)
+    if not link then
+        mp.osd_message(T.url_none, 3)
+        return
+    end
+    if queue and prop("playlist-count", 0) > 0 then
+        mp.commandv("loadfile", link, "append")
+        mp.osd_message(T.url_queued .. short(link), 3)
+    else
+        mp.commandv("loadfile", link, "replace")
+        mp.osd_message(T.url_opening .. short(link), 3)
+    end
+end
+
+local function clipboard()
+    return mp.get_property("clipboard/text", "")
+end
+
+-- the input field with the clipboard already pasted in (if it holds a link)
+local function ask_link()
+    ask_text(T.url_prompt, clean_link(clipboard()) or "", function (text) open_link(text) end)
+end
+
 local function report(ok, err, text)
     mp.osd_message(ok and text or (T.skin_failed .. tostring(err)), 3)
 end
@@ -602,64 +664,338 @@ browser = function (dir, mode)
     end
 end
 
-local function main_menu()
-    local items = {}
-    local function add(item) items[#items + 1] = item end
-    local track_counts = {video = 0, audio = 0, sub = 0}
-    local current = {}
-    for _, track in ipairs(prop("track-list", {})) do
-        track_counts[track.type] = (track_counts[track.type] or 0) + 1
-        if track.selected then current[track.type] = track_label(track) end
-    end
-    local pl_count = prop("playlist-count", 0)
-    local ch_count = real_chapter_count()
-    local path = absolute_path(mp.get_property("path"))
+-- ready items for menus made of blocks (menukit.lua) ---------------------------------------------
 
-    add({title = T.open_file, icon = "folder_open", hint = "Ctrl+O", submenu = browser(start_dir(), "media")})
-    add({title = T.history, icon = "history", hint = "Ctrl+H", submenu = history})
-    add({title = T.playlist, icon = "queue_music",
-         hint = pl_count > 0 and (prop("playlist-pos-1", 0) .. "/" .. pl_count) or nil, submenu = playlist})
-    if ch_count > 0 then
-        add({title = T.chapters, icon = "bookmarks", hint = tostring(ch_count), submenu = chapters})
+local kit = require "menukit"
+local radial = require "radial"
+local menu_editor = require "menu_editor"
+
+-- what is there now: tracks, playlist, chapters... computed once per menu level
+local function context()
+    local c = {tracks = {video = 0, audio = 0, sub = 0}, current = {}}
+    for _, track in ipairs(prop("track-list", {})) do
+        c.tracks[track.type] = (c.tracks[track.type] or 0) + 1
+        if track.selected then c.current[track.type] = track_label(track) end
     end
-    add({title = T.subtitles, icon = "subtitles", hint = current.sub or T.off_hint,
-         submenu = tracks("sub", T.subtitles, "sid")})
-    if track_counts.audio > 0 then
-        add({title = T.audio, icon = "audiotrack", hint = current.audio, submenu = tracks("audio", T.audio, "aid")})
-    end
-    if track_counts.video > 1 then
-        add({title = T.video, icon = "movie", hint = current.video, submenu = tracks("video", T.video, "vid")})
-    end
-    local quality = quality_data()
-    if quality.kind then
-        add({title = T.quality, icon = "high_quality", hint = quality_title(quality), submenu = qualities})
-    end
-    add({title = T.speed, icon = "speed", hint = format_speed(prop("speed", 1)), submenu = speeds})
-    add({title = T.aspect, icon = "aspect_ratio", submenu = aspects})
-    local loop_hints = {off = T.loop_off_hint, file = T.loop_file_hint, playlist = T.loop_playlist_hint}
-    add({title = T.loop, icon = "repeat", hint = loop_hints[loop_state()], submenu = loops})
-    add({title = T.audio_device, icon = "speaker", submenu = audio_devices, separator = true})
-    if hooks.skin_current then
-        local layout, _, skin_name = hooks.skin_current()
-        add({title = T.skins, icon = "style", hint = layout == "skin" and skin_name or T.off_hint, submenu = skins_menu})
-    end
-    add({title = T.editor, icon = "dashboard_customize", hint = "Ctrl+E", action = function ()
-        mp.command("script-binding hybrid/editor")
-    end})
-    add({title = T.screenshot, icon = "photo_camera", hint = "S", action = function ()
-        mp.add_timeout(0.15, function () mp.commandv("osd-msg", "screenshot") end)
-    end})
-    if path then
-        add({title = T.show_in_folder, icon = "folder", action = function ()
-            mp.commandv("run", "explorer", "/select," .. path)
-        end})
-    end
-    add({title = T.stats, icon = "query_stats", hint = "I", action = function ()
-        mp.command("script-binding stats/display-stats-toggle")
-    end})
-    add({title = T.quit, icon = "logout", hint = "Q", action = function () mp.command("quit") end})
-    return {title = T.menu, items = items}
+    c.pl_count = prop("playlist-count", 0)
+    c.ch_count = real_chapter_count()
+    c.path = absolute_path(mp.get_property("path"))
+    c.playing = prop("path") ~= nil
+    c.quality = quality_data()
+    return c
 end
+
+local function volumes()
+    local current = prop("volume", 100)
+    local max = prop("volume-max", 100)
+    local items = {}
+    local list = {0, 25, 50, 75, 100}
+    if max > 100 then list[#list + 1] = max end
+    for _, v in ipairs(list) do
+        items[#items + 1] = {title = string.format("%d%%", v), active = math.abs(current - v) < 0.5,
+            action = function () mp.set_property_number("volume", v) end}
+    end
+    items[#items].separator = true
+    items[#items + 1] = {title = prop("mute", false) and "Включить звук" or "Выключить звук", icon = "volume_off",
+        action = function () mp.command("cycle mute") return "keep" end}
+    return {title = "Громкость", items = items}
+end
+
+local function run(command) return function () mp.command(command) end end
+local function stay(command) return function () mp.command(command) return "keep" end end
+local function is_playing(c) return c.playing end
+
+-- id, group, title, icon, key (shown as the hint / in the tile tip), tile (short title for tiles),
+-- cond(c): when "auto" shows it, make(c): hint, action / submenu, active, title or icon of the moment
+local CATALOG = {
+    -- open
+    {id = "open_file", group = "Открыть", title = T.open_file, tile = "Файл", icon = "folder_open", key = "Ctrl+O",
+     make = function () return {submenu = browser(start_dir(), "media")} end},
+    {id = "open_url", group = "Открыть", title = T.open_url, tile = "Ссылка", icon = "link", key = "Ctrl+V",
+     make = function () return {action = function () mp.add_timeout(0.05, ask_link) end} end},
+    {id = "paste_queue", group = "Открыть", title = "Ссылку из буфера — в плейлист", tile = "В очередь",
+     icon = "playlist_add", key = "Ctrl+Shift+V",
+     make = function () return {action = function () open_link(clipboard(), true) end} end},
+    {id = "history", group = "Открыть", title = T.history, icon = "history", key = "Ctrl+H",
+     make = function () return {submenu = history} end},
+    {id = "load_subs", group = "Открыть", title = T.load_subs, tile = "Субтитры из файла", icon = "file_open",
+     cond = is_playing, make = function () return {submenu = browser(start_dir(), "sub")} end},
+    -- what is playing
+    {id = "playlist", group = "Сейчас играет", title = T.playlist, icon = "queue_music", key = "Alt+P",
+     cond = function (c) return c.pl_count > 1 end,
+     make = function (c) return {hint = prop("playlist-pos-1", 0) .. "/" .. c.pl_count, submenu = playlist} end},
+    {id = "chapters", group = "Сейчас играет", title = T.chapters, icon = "bookmarks", key = "Alt+C",
+     cond = function (c) return c.ch_count > 0 end,
+     make = function (c) return {hint = tostring(c.ch_count), submenu = chapters} end},
+    {id = "subtitles", group = "Сейчас играет", title = T.subtitles, icon = "subtitles", key = "Alt+S", cond = is_playing,
+     make = function (c) return {hint = c.current.sub or T.off_hint, submenu = tracks("sub", T.subtitles, "sid")} end},
+    {id = "audio", group = "Сейчас играет", title = T.audio, tile = "Аудио", icon = "audiotrack", key = "Alt+A",
+     cond = function (c) return c.tracks.audio > 0 end,
+     make = function (c) return {hint = c.current.audio, submenu = tracks("audio", T.audio, "aid")} end},
+    {id = "video", group = "Сейчас играет", title = T.video, tile = "Видео", icon = "movie",
+     cond = function (c) return c.tracks.video > 1 end,
+     make = function (c) return {hint = c.current.video, submenu = tracks("video", T.video, "vid")} end},
+    {id = "quality", group = "Сейчас играет", title = T.quality, icon = "high_quality", key = "Alt+Q",
+     cond = function (c) return c.quality.kind ~= nil end,
+     make = function (c) return {hint = quality_title(c.quality), submenu = qualities} end},
+    {id = "speed", group = "Сейчас играет", title = T.speed, icon = "speed", cond = is_playing,
+     make = function () return {hint = format_speed(prop("speed", 1)), submenu = speeds} end},
+    {id = "loop", group = "Сейчас играет", title = T.loop, icon = "repeat", cond = is_playing,
+     make = function ()
+         local hints = {off = T.loop_off_hint, file = T.loop_file_hint, playlist = T.loop_playlist_hint}
+         return {hint = hints[loop_state()], submenu = loops}
+     end},
+    {id = "ab_loop", group = "Сейчас играет", title = "Повтор отрезка A–B", tile = "A–B", icon = "flag", cond = is_playing,
+     make = function () return ab_loop_item() end},
+    {id = "aspect", group = "Сейчас играет", title = T.aspect, tile = "Пропорции", icon = "aspect_ratio", cond = is_playing,
+     make = function () return {submenu = aspects} end},
+    -- control
+    {id = "pause", group = "Управление", title = "Пауза", icon = "pause", key = "Пробел", cond = is_playing,
+     make = function ()
+         local paused = prop("pause", false)
+         return {title = paused and "Продолжить" or "Пауза", icon = paused and "play_arrow" or "pause",
+                 action = run("cycle pause")}
+     end},
+    {id = "seek_back", group = "Управление", title = "Назад на 10 с", tile = "−10 с", icon = "replay_10",
+     cond = is_playing, make = function () return {action = stay("seek -10")} end},
+    {id = "seek_forward", group = "Управление", title = "Вперёд на 10 с", tile = "+10 с", icon = "forward_10",
+     cond = is_playing, make = function () return {action = stay("seek 10")} end},
+    {id = "prev_file", group = "Управление", title = "Предыдущее видео", tile = "Назад", icon = "skip_previous",
+     cond = function (c) return c.pl_count > 1 end, make = function () return {action = run("playlist-prev")} end},
+    {id = "next_file", group = "Управление", title = "Следующее видео", tile = "Дальше", icon = "skip_next",
+     cond = function (c) return c.pl_count > 1 end, make = function () return {action = run("playlist-next")} end},
+    {id = "chapter_prev", group = "Управление", title = "Предыдущая глава", tile = "Глава −", icon = "first_page",
+     cond = function (c) return c.ch_count > 0 end, make = function () return {action = stay("add chapter -1")} end},
+    {id = "chapter_next", group = "Управление", title = "Следующая глава", tile = "Глава +", icon = "last_page",
+     cond = function (c) return c.ch_count > 0 end, make = function () return {action = stay("add chapter 1")} end},
+    {id = "fullscreen", group = "Управление", title = "Полный экран", tile = "Экран", icon = "fullscreen", key = "F",
+     make = function ()
+         local on = prop("fullscreen", false)
+         return {active = on, icon = on and "fullscreen_exit" or "fullscreen", action = run("cycle fullscreen")}
+     end},
+    {id = "pip", group = "Управление", title = "Картинка в картинке", tile = "PiP", icon = "picture_in_picture_alt",
+     key = "Ctrl+P", cond = is_playing, make = function () return {action = run("script-binding hybrid/pip")} end},
+    {id = "ontop", group = "Управление", title = "Поверх всех окон", tile = "Поверх", icon = "push_pin",
+     make = function () return {active = prop("ontop", false), action = stay("cycle ontop")} end},
+    {id = "mute", group = "Управление", title = "Без звука", tile = "Звук", icon = "volume_off", key = "M",
+     cond = function (c) return c.tracks.audio > 0 end,
+     make = function ()
+         local muted = prop("mute", false)
+         return {active = muted, icon = muted and "volume_off" or "volume_up", action = stay("cycle mute")}
+     end},
+    {id = "volume", group = "Управление", title = "Громкость", icon = "volume_up",
+     cond = function (c) return c.tracks.audio > 0 end,
+     make = function () return {hint = string.format("%d%%", math.floor(prop("volume", 0) + 0.5)), submenu = volumes} end},
+    -- other
+    {id = "audio_device", group = "Прочее", title = T.audio_device, tile = "Устройство", icon = "speaker", key = "Alt+D",
+     make = function () return {submenu = audio_devices} end},
+    {id = "screenshot", group = "Прочее", title = T.screenshot, icon = "photo_camera", key = "S", cond = is_playing,
+     make = function ()
+         return {action = function () mp.add_timeout(0.15, function () mp.commandv("osd-msg", "screenshot") end) end}
+     end},
+    {id = "show_in_folder", group = "Прочее", title = T.show_in_folder, tile = "Папка", icon = "folder",
+     cond = function (c) return c.path ~= nil end,
+     make = function (c) return {action = function () mp.commandv("run", "explorer", "/select," .. c.path) end} end},
+    {id = "stats", group = "Прочее", title = T.stats, icon = "query_stats", key = "I", cond = is_playing,
+     make = function () return {action = run("script-binding stats/display-stats-toggle")} end},
+    {id = "quit_later", group = "Прочее", title = "Выйти и запомнить место", tile = "Выйти (запомнить)",
+     icon = "bookmark_added", key = "Shift+Q", cond = is_playing, make = function () return {action = run("quit-watch-later")} end},
+    {id = "quit", group = "Прочее", title = T.quit, icon = "logout", key = "Q",
+     make = function () return {action = run("quit")} end},
+    -- the shell
+    {id = "skins", group = "Prism", title = T.skins, icon = "style",
+     cond = function () return hooks.skin_current ~= nil end,
+     make = function ()
+         local layout, _, skin_name = hooks.skin_current()
+         return {hint = layout == "skin" and skin_name or T.off_hint, submenu = skins_menu}
+     end},
+    {id = "editor", group = "Prism", title = T.editor, tile = "Редактор", icon = "dashboard_customize", key = "Ctrl+E",
+     make = function () return {action = run("script-binding hybrid/editor")} end},
+    {id = "menu_editor", group = "Prism", title = "Настроить меню…", tile = "Меню", icon = "tune", key = "Ctrl+Shift+E",
+     make = function () return {action = function () mp.add_timeout(0.05, menu_editor.open) end} end},
+}
+local BY_ID = {}
+for _, entry in ipairs(CATALOG) do BY_ID[entry.id] = entry end
+M.CATALOG, M.BY_ID = CATALOG, BY_ID
+
+-- building a menu level from blocks ----------------------------------------------------------------
+
+local function shown(block, entry, c)
+    local when = block.when or "auto"
+    if when == "always" then return true end
+    if when == "playing" then return c.playing end
+    if when == "idle" then return not c.playing end
+    if entry and entry.cond then return entry.cond(c) end
+    return true
+end
+
+-- a block of type "item" -> a menu item, nil when it is not shown now
+local function make_item(block, c, as_tile)
+    local entry = block.ref and BY_ID[block.ref]
+    if block.ref and not entry then return nil end
+    if not shown(block, entry, c) then return nil end
+    local item = {}
+    if entry then
+        local made = entry.make and entry.make(c) or {}
+        for k, v in pairs(made) do item[k] = v end
+        local full = block.title or made.title or entry.title
+        item.title = block.title or (as_tile and entry.tile) or made.title or entry.title
+        item.short = block.title or entry.tile or made.title or entry.title -- under a button of the ring
+        item.icon = block.icon or made.icon or entry.icon
+        item.hint = block.hint or made.hint or entry.key
+        item.tip = full .. (entry.key and ("  ·  " .. entry.key) or "")
+    else
+        item.title = block.title or block.command
+        item.icon = block.icon
+        item.hint = block.hint
+        item.tip = item.title
+        if block.command then
+            item.action = function ()
+                mp.command(block.command)
+                if block.keep then return "keep" end
+            end
+        end
+    end
+    item.color = block.color
+    if block.muted then item.muted = true end
+    return item
+end
+
+local build_items, open_ring
+
+-- a folder: a submenu (or a ring of its own), nil when nothing inside is shown now
+local function folder_item(block, c, look)
+    local inner = build_items(block.blocks, look, c)
+    if #inner == 0 then return nil end
+    local function builder()
+        return {title = block.title, items = build_items(block.blocks, look), look = look}
+    end
+    local item = {title = block.title, icon = block.icon or "folder", hint = block.hint, inner = inner}
+    if block.shape == "ring" then
+        item.action = function () open_ring(block.blocks, look, block.title) return "stay" end
+    else
+        item.submenu = builder
+    end
+    return item
+end
+
+build_items = function (blocks, look, c)
+    c = c or context()
+    local items = {}
+    for _, b in ipairs(blocks or {}) do
+        if b.type == "item" then
+            items[#items + 1] = make_item(b, c)
+        elseif b.type == "tiles" then
+            local chips = {}
+            for _, i in ipairs(b.items) do chips[#chips + 1] = make_item(i, c, true) end
+            if #chips > 0 then items[#items + 1] = {chips = chips, compact = b.compact} end
+        elseif b.type == "folder" then
+            items[#items + 1] = folder_item(b, c, look)
+        elseif b.type == "header" then
+            items[#items + 1] = {header = true, title = b.title}
+        elseif b.type == "separator" and #items > 0 then
+            items[#items].separator = true
+        end
+    end
+    -- a caption with nothing under it goes away; no line under the last row
+    local out = {}
+    for i, item in ipairs(items) do
+        if not (item.header and (not items[i + 1] or items[i + 1].header)) then out[#out + 1] = item end
+    end
+    if out[#out] then out[#out].separator = nil end
+    return out
+end
+
+-- everything inside the folders, for search from the top level
+local function folder_contents(items, out)
+    for _, item in ipairs(items) do
+        if item.inner then
+            for _, inner in ipairs(item.inner) do
+                if inner.chips then
+                    for _, chip in ipairs(inner.chips) do out[#out + 1] = chip end
+                elseif not inner.header then
+                    out[#out + 1] = inner
+                end
+            end
+            folder_contents(item.inner, out)
+        end
+    end
+    return out
+end
+
+local function list_builder(def)
+    return function ()
+        local items = build_items(def.blocks, def.look)
+        for _, item in ipairs(folder_contents(items, {})) do
+            local copy = {hidden = true}
+            for k, v in pairs(item) do if k ~= "inner" then copy[k] = v end end
+            items[#items + 1] = copy
+        end
+        return {title = T.menu, items = items, look = def.look, selected = 1}
+    end
+end
+
+-- a ring: the shown items of these blocks around the cursor, more than 8 go to "⋯"
+local RING_MAX = 8
+local function ring_builder(blocks, look, title)
+    return function ()
+        local flat = {}
+        for _, item in ipairs(build_items(blocks, look)) do
+            if item.chips then
+                for _, chip in ipairs(item.chips) do flat[#flat + 1] = chip end
+            elseif not item.header then
+                flat[#flat + 1] = item
+            end
+        end
+        if #flat > RING_MAX then
+            local rest = {}
+            for i = RING_MAX, #flat do rest[#rest + 1] = flat[i] end
+            for i = #flat, RING_MAX, -1 do flat[i] = nil end
+            flat[RING_MAX] = {title = "Остальное", icon = "apps",
+                submenu = function () return {title = "Остальное", items = rest, look = look} end}
+        end
+        -- a submenu opened from the ring is a list in the look of this menu
+        for _, item in ipairs(flat) do
+            local submenu = item.submenu
+            if submenu then
+                item.submenu = function ()
+                    local spec = submenu() or {}
+                    spec.look = spec.look or look
+                    return spec
+                end
+            end
+        end
+        return {title = title or T.menu, items = flat, look = look}
+    end
+end
+
+-- open a menu made of blocks: as a list or a ring; opts.on_close, opts.id
+local function open_def(def, opts)
+    opts = opts or {}
+    local id = opts.id or "main"
+    if def.look.shape == "ring" then
+        radial.open(id, ring_builder(def.blocks, def.look), {
+            look = def.look, on_close = opts.on_close,
+            -- typing in the ring: the same menu as a list with search
+            to_list = function (text, on_close)
+                menu.open(id, list_builder(def), {search = text, on_close = on_close})
+            end,
+        })
+    else
+        menu.open(id, list_builder(def), {on_close = opts.on_close})
+    end
+end
+
+open_ring = function (blocks, look, title)
+    menu.close()
+    radial.open("ring-folder", ring_builder(blocks, look, title), {look = look})
+end
+
+-- a submenu chosen in the ring opens as a list
+radial.setup({open_list = function (builder, on_close) menu.open("ring-list", builder, {on_close = on_close}) end})
+
+M.open_def = open_def
+M.build_items = build_items
 
 -- public ----------------------------------------------------------------------------------
 
@@ -669,7 +1005,21 @@ function M.init(renderer, skin_hooks)
     local function binding(name, id, builder)
         mp.add_key_binding(nil, name, function () menu.open(id, builder) end)
     end
-    binding("menu", "main", main_menu)
+    -- the right click (and Tab) open the menus chosen in the menu editor (menus/settings.json)
+    mp.add_key_binding(nil, "menu", function ()
+        if radial.is_open() then return radial.close() end
+        open_def((kit.load(kit.settings().right)))
+    end)
+    mp.add_key_binding(nil, "menu2", function ()
+        local second = kit.settings().second
+        if not second then
+            mp.osd_message("Второе меню не выбрано: «Настроить меню…» → «Мои меню» → меню → «Открывать по Tab»", 3)
+            return
+        end
+        if radial.is_open() then return radial.close() end
+        open_def((kit.load(second)), {id = "second"})
+    end)
+    mp.add_key_binding(nil, "menu-editor", function () menu_editor.open() end)
     binding("subtitles", "subtitles", tracks("sub", T.subtitles, "sid"))
     binding("audio", "audio", tracks("audio", T.audio, "aid"))
     binding("video", "video", tracks("video", T.video, "vid"))
@@ -688,6 +1038,11 @@ function M.init(renderer, skin_hooks)
     end)
     mp.add_key_binding(nil, "open-file", function () menu.open("open-file", browser(start_dir(), "media")) end)
     mp.add_key_binding(nil, "load-subtitles", function () menu.open("load-subtitles", browser(start_dir(), "sub")) end)
+    mp.add_key_binding(nil, "paste", function () open_link(clipboard()) end)
+    mp.add_key_binding(nil, "paste-queue", function () open_link(clipboard(), true) end)
+    mp.add_key_binding(nil, "open-url", ask_link)
+    menu_editor.init({menu = menu, kit = kit, catalog = CATALOG, by_id = BY_ID, ask_text = ask_text,
+                      open_def = open_def})
 end
 
 return M

@@ -48,7 +48,28 @@ local function icon_name(icon)
     for _, i in ipairs(ICONS) do
         if i[1] == icon then return i[2] end
     end
+    if type(icon) == "string" and icon:sub(1, 5) == "file:" then return (icon:sub(6):gsub("%.%w+$", "")) end
     return icon
+end
+
+-- the "Мои иконки" part of an icon list: own icons from ~~/icons (icons.lua), then a caption for the built-in ones;
+-- pick(name) is the action of an icon
+local function own_icon_items(list, current, pick, no_builtin)
+    local icons = require "icons"
+    list[#list + 1] = {header = true, title = "МОИ ИКОНКИ"}
+    for _, own in ipairs(icons.list()) do
+        list[#list + 1] = {title = own.title, icon = own.name, hint = own.kind:upper(), active = own.name == current,
+                           action = function () return pick(own.name) end}
+    end
+    list[#list + 1] = {title = "Открыть папку с иконками", icon = "folder_open", hint = "кидай туда .svg или .png",
+        action = function ()
+            icons.make_dir(icons.dir())
+            mp.commandv("run", "explorer", icons.dir())
+            return "stay"
+        end}
+    list[#list + 1] = {title = "Обновить список", icon = "refresh", separator = not no_builtin,
+                       action = function () icons.forget() return "keep" end}
+    if not no_builtin then list[#list + 1] = {header = true, title = "ВСТРОЕННЫЕ"} end
 end
 
 -- ready-made buttons: title, icon, left click, tooltip
@@ -85,6 +106,7 @@ local BUILTIN = {
 local function item_name(item)
     if item.custom and item.custom.kind == "zone" then return "Зона «" .. (item.custom.name or item.id) .. "»" end
     if item.custom and item.custom.kind == "plate" then return "Плашка" end
+    if item.custom and item.custom.kind == "mascot" then return "Маскот" end
     if item.custom then
         if item.custom.kind == "text" then return "Надпись «" .. (item.custom.text or "") .. "»" end
         return item.tooltip or ("Кнопка «" .. icon_name(item.custom.icon) .. "»")
@@ -731,7 +753,7 @@ end
 
 -- properties menu -------------------------------------------------------------------------
 
-local look_menu, skin_choice, look_color, create_menu, open_properties
+local look_menu, skin_choice, look_color, create_menu, open_properties, volume_scale_items
 
 -- what a button can do; command nil = what the element does by itself
 local ACTIONS = {
@@ -1077,9 +1099,45 @@ local function properties(index)
         local items = {}
         local function add(entry) items[#items + 1] = entry end
 
-        if item.id == "volume" then
-            -- the volume widget: only its place and size (its look comes from hybrid.conf)
-            add({title = "Ширина — толщина регулятора, высота — его длина", icon = "info", action = function () return "keep" end})
+        if item.custom and item.custom.kind == "mascot" then
+            -- the mascot (mascot.lua): a picture per state, the built-in "Призмочка" by default
+            local states = {{"sit", "Сидит на панели"}, {"peek", "На паузе — выглядывает"}, {"sleep", "Спит — ничего не играет"},
+                            {"wave", "В конце видео — машет"}}
+            for _, st in ipairs(states) do
+                local image = item.custom.images and item.custom.images[st[1]]
+                add({title = st[2], icon = image or "pets", hint = image and icon_name(image) or "Призмочка",
+                     submenu = function ()
+                         local list = {{title = "Призмочка (встроенная)", icon = "change_history",
+                             active = not (ed.skin.items[index].custom.images or {})[st[1]], action = function ()
+                                 change(index, function (it)
+                                     if it.custom.images then it.custom.images[st[1]] = nil end
+                                     if it.custom.images and not next(it.custom.images) then it.custom.images = nil end
+                                 end)
+                                 return "keep"
+                             end}}
+                         own_icon_items(list, (ed.skin.items[index].custom.images or {})[st[1]], function (name)
+                             change(index, function (it)
+                                 it.custom.images = it.custom.images or {}
+                                 it.custom.images[st[1]] = name
+                             end)
+                             return "keep"
+                         end, true)
+                         return {title = st[2], items = list}
+                     end})
+            end
+            add({title = "Во время просмотра", icon = "visibility", hint = item.custom.quiet and "прячется" or "сидит на панели",
+                 action = function ()
+                     change(index, function (it) it.custom.quiet = not it.custom.quiet or nil end)
+                     return "keep"
+                 end})
+            add({title = "Своя картинка: кинь PNG или SVG в «Мои иконки»", icon = "info", muted = true,
+                 action = function () return "keep" end})
+        elseif item.id == "volume" then
+            -- the volume widget: its place and size here, its scale belongs to the whole skin
+            volume_scale_items(add, function () open_properties(index) end)
+            local hint = ed.skin.volume_dir == "horizontal" and "Ширина — длина регулятора, высота — его толщина"
+                or "Ширина — толщина регулятора, высота — его длина"
+            add({title = hint, icon = "info", muted = true, action = function () return "keep" end})
         elseif is_zone(item) then
             -- a zone covers a lot of the window: objects can be created on it from here
             if ed.right_at then
@@ -1225,6 +1283,10 @@ local function properties(index)
         if item.custom and item.custom.kind == "button" then
             add({title = "Сменить иконку", icon = item.custom.icon, hint = icon_name(item.custom.icon), submenu = function ()
                 local list = {}
+                own_icon_items(list, ed.skin.items[index].custom.icon, function (name)
+                    change(index, function (it) it.custom = {kind = "button", icon = name} end)
+                    return "keep"
+                end)
                 for _, i in ipairs(ICONS) do
                     list[#list + 1] = {title = i[2], icon = i[1], active = i[1] == ed.skin.items[index].custom.icon,
                         action = function ()
@@ -1325,6 +1387,9 @@ create_menu = function (at)
         end}
         items[#items + 1] = {title = "Своя кнопка (выбрать иконку)", icon = "add_box", submenu = function ()
             local list = {}
+            own_icon_items(list, nil, function (name)
+                add_item({id = new_custom_id(), custom = {kind = "button", icon = name}, w = 24, h = 24}, at)
+            end)
             for _, i in ipairs(ICONS) do
                 list[#list + 1] = {title = i[2], icon = i[1], action = function ()
                     add_item({id = new_custom_id(), custom = {kind = "button", icon = i[1]}, w = 24, h = 24}, at)
@@ -1340,6 +1405,14 @@ create_menu = function (at)
                 M.render()
             end)
         end}
+        local has_mascot = false
+        for _, it in ipairs(ed.skin.items) do has_mascot = has_mascot or (it.custom and it.custom.kind == "mascot") end
+        if not has_mascot then
+            items[#items + 1] = {title = "Маскот «Призмочка»", icon = "pets", action = function ()
+                add_item({id = new_custom_id(), custom = {kind = "mascot"}, w = 60, h = 60}, at)
+                toast("Маскот живёт на панели: на паузе выглядывает, без видео спит, в конце машет. Картинки — в свойствах", 7)
+            end}
+        end
         items[#items + 1] = {title = "Плашка (подложка под кнопки)", icon = "rectangle", action = function ()
             add_item({id = new_custom_id(), custom = {kind = "plate"}, w = 240, h = 56}, at)
             toast("Плашка создана: растяни её под группу кнопок; цвет и скругление — в свойствах", 6)
@@ -1416,13 +1489,23 @@ local LOOK = {
                 {"Белая", "#FFFFFF"}},
     handle_color = {{"Как в теме", nil}},
     handle_border_color = {{"Как в теме", nil}, {"Без обводки", "none"}},
+    -- chameleon: the accent follows the video
+    accent_mode = {{"Авто (своя тема скина или хамелеон)", nil}, {"Из видео — хамелеон", "video"}, {"Из темы", "theme"}},
+    chameleon_strength = {{"Мягко", nil}, {"Ярко, как в кадре", "vivid"}},
+    -- the volume scale
+    volume_max = {{"Как в mpv.conf", nil}, {"100%", 100}, {"130%", 130}, {"150%", 150}, {"200%", 200}},
+    volume_step = {{"Как в настройках", nil}, {"1%", 1}, {"2%", 2}, {"5%", 5}, {"10%", 10}},
+    volume_number = {{"Показывать", nil}, {"Скрыть", false}},
+    volume_color = {{"Как в теме", nil}},
+    volume_dir = {{"Вертикально", nil}, {"Горизонтально", "horizontal"}},
 }
 for _, c in ipairs(COLORS) do
     table.insert(LOOK.handle_color, c)
     table.insert(LOOK.handle_border_color, c)
+    table.insert(LOOK.volume_color, c)
 end
 -- look fields that also take "Свой цвет…"
-local LOOK_COLOR_KEYS = {bg_color = true, handle_color = true, handle_border_color = true}
+local LOOK_COLOR_KEYS = {bg_color = true, handle_color = true, handle_border_color = true, volume_color = true}
 
 skin_choice = function (title, key)
     return function ()
@@ -1453,6 +1536,57 @@ look_color = function (title, key, back)
     end
 end
 
+-- the volume scale (skin fields volume_*): in the properties of the volume widget and in "Оформление"
+volume_scale_items = function (add, back)
+    local function choice(title, icon, key)
+        add({title = title, icon = icon, hint = find_name(LOOK[key], ed.skin[key], tostring(ed.skin[key])),
+             submenu = skin_choice(title, key)})
+    end
+    choice("Максимум шкалы", "volume_up", "volume_max")
+    choice("Шаг колёсика и стрелок", "stairs", "volume_step")
+    choice("Цифра громкости", "pin", "volume_number")
+    add({title = "Цвет заливки", icon = "format_color_fill",
+         hint = find_name(LOOK.volume_color, ed.skin.volume_color, ed.skin.volume_color),
+         action = look_color("Цвет заливки громкости", "volume_color", back)})
+    add({title = "Положение", icon = "screen_rotation", hint = find_name(LOOK.volume_dir, ed.skin.volume_dir),
+         submenu = function ()
+             local items = {}
+             for _, entry in ipairs(LOOK.volume_dir) do
+                 items[#items + 1] = {title = entry[1], active = ed.skin.volume_dir == entry[2], action = function ()
+                     if ed.skin.volume_dir == entry[2] then return "keep" end
+                     push_undo()
+                     ed.skin.volume_dir = entry[2]
+                     -- turn the widget's box: same right edge (or left), same middle height
+                     local volume
+                     for _, it in ipairs(ed.skin.items) do
+                         if it.id == "volume" and it.w and it.h then
+                             local w, h = it.h, it.w
+                             if it.anchor ~= "left" then it.x = it.x + it.w - w end
+                             it.bottom = math.max(0, math.floor(it.bottom + (it.h - h) / 2))
+                             it.w, it.h = w, h
+                             volume = it
+                         end
+                     end
+                     -- its hover zone grows to cover the turned widget (with 20 px around)
+                     for _, z in ipairs(ed.skin.items) do
+                         if volume and z.id == "zone_volume" and z.w and z.anchor == volume.anchor then
+                             local x1 = math.min(z.x, volume.x - 20)
+                             local x2 = math.max(z.x + z.w, volume.x + volume.w + 20)
+                             if z.anchor == "right" then x2 = math.min(x2, 0) else x1 = math.max(x1, 0) end
+                             z.x, z.w = x1, x2 - x1
+                             local b1 = math.max(0, math.min(z.bottom, volume.bottom - 20))
+                             local b2 = math.max(z.bottom + z.h, volume.bottom + volume.h + 20)
+                             z.bottom, z.h = b1, b2 - b1
+                         end
+                     end
+                     relayout()
+                     return "keep"
+                 end}
+             end
+             return {title = "Положение регулятора", items = items}
+         end})
+end
+
 look_menu = function ()
     return function ()
         local items = {}
@@ -1462,6 +1596,8 @@ look_menu = function ()
                                  action = LOOK_COLOR_KEYS[key] and look_color(title, key, M.open_look) or nil}
         end
         add("Цвет (тема)", "palette", "theme")
+        add("Цвет акцента", "colorize", "accent_mode")
+        if ed.skin.accent_mode ~= "theme" then add("Хамелеон", "auto_awesome", "chameleon_strength") end
         add("Подложка", "layers", "background")
         if ed.skin.background == "capsule" then
             add("Отступ капсулы от краёв", "padding", "bg_inset")
@@ -1473,6 +1609,12 @@ look_menu = function ()
         add("Свечение полосы", "flare", "glow")
         add("Цвет кружка на полосе", "radio_button_checked", "handle_color")
         add("Обводка кружка", "trip_origin", "handle_border_color")
+        items[#items].separator = true
+        items[#items + 1] = {title = "Шкала громкости", icon = "volume_up", submenu = function ()
+            local list = {}
+            volume_scale_items(function (entry) list[#list + 1] = entry end, M.open_look)
+            return {title = "Шкала громкости", items = list}
+        end}
         return {title = "Оформление скина", items = items}
     end
 end
@@ -1678,9 +1820,13 @@ end
 -- open / close --------------------------------------------------------------------------
 
 function M.is_open() return ed ~= nil end
+function M.is_dirty() return ed ~= nil and ed.dirty end
 
 function M.open()
     if ed then return end
+    -- one editor at a time: the menu editor saves everything at once, so it just closes
+    local menu_editor = require "menu_editor"
+    if menu_editor.is_open() then menu_editor.close() end
     local skin = api.get_skin()
     ed = {
         skin = M.with_zones(api.copy(skin)), snapshot = api.copy(skin), undo = {}, dirty = false,
