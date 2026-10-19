@@ -46,7 +46,7 @@ local user_opts = {
     volume_size = 36,                      -- volume widget width
     volume_step = 2,                       -- volume change per wheel tick
     volume_flash = true,                   -- briefly show the volume widget when volume changes
-    pause_indicator = "flash",             -- uosc-style pause indicator: "flash", "static" or "no"
+    pause_indicator = "prism",             -- pause indicator: "prism" (beam through a prism), "flash", "static" or "no"
     remember_volume = true,                -- restore the last volume on the next start
     remember_speed = true,                 -- restore the last playback speed on the next start
     theme = "orange",                      -- accent color theme: orange, blue, purple, green, red, pink or custom
@@ -5366,11 +5366,16 @@ local pause_indicator = {
     start = nil,    -- flash start time
     timer = nil,
 }
+-- the skin may choose its own pause ("Оформление" -> "Значок паузы"), otherwise hybrid.conf
+pause_indicator.mode = function ()
+    local skin = (user_opts.layout == "skin" and not state.is_image) and get_skin() or {}
+    return skin.pause_indicator or user_opts.pause_indicator
+end
 
 local function render_pause_indicator()
     local pi = pause_indicator
     local w, h = state.osd_dimensions.w, state.osd_dimensions.h
-    local static = user_opts.pause_indicator == "static"
+    local static = pause_indicator.mode() == "static"
     local opacity = 0
     if static then
         opacity = pi.paused and 1 or 0
@@ -5411,9 +5416,14 @@ mp.observe_property("pause", "bool", function (_, paused)
     local pi = pause_indicator
     local previous = pi.paused
     pi.paused = paused
-    if user_opts.pause_indicator == "no" or previous == nil or state.idle_active then return end
+    local mode = pause_indicator.mode()
+    -- the prism (beam.lua): drawn in on pause, stays, fades on play
+    if mode ~= "prism" or state.idle_active then require("beam").clear() end
+    if mode == "no" or previous == nil or state.idle_active then return end
     if mp.get_time() < state.pause_flash_block_until then return end
-    if user_opts.pause_indicator == "static" then
+    if mode == "prism" then
+        require("beam").set(paused, user_opts.seekbarfg_color)
+    elseif mode == "static" then
         render_pause_indicator()
     elseif previous ~= paused then
         pi.start = mp.get_time()
@@ -6042,7 +6052,10 @@ mp.observe_property("pause", "native", function () osc_param.update_mascot() end
 mp.observe_property("eof-reached", "native", function () osc_param.update_mascot() end)
 mp.observe_property("idle-active", "native", function (_, idle)
     -- nothing plays: a frame preview left from the last file would hang in the middle of the screen
-    if idle then mp.commandv("script-message-to", "thumbfast", "clear") end
+    if idle then
+        mp.commandv("script-message-to", "thumbfast", "clear")
+        require("beam").clear()
+    end
     osc_param.update_mascot()
 end)
 require("pet").on_change = function () osc_param.update_mascot() end
@@ -6088,7 +6101,7 @@ local function validate_user_opts()
     validate_string_opt("keeponpause",  {"no", "bottombar", "both"}, "no")
     validate_string_opt("deadzone_hide", {"instant", "timeout"}, "instant")
     validate_string_opt("volume_widget", {"right", "left", "no"}, "right")
-    validate_string_opt("pause_indicator", {"flash", "static", "no"}, "flash")
+    validate_string_opt("pause_indicator", {"prism", "flash", "static", "no"}, "prism")
     validate_string_opt("layout", {"default", "skin"}, "default")
 
     local hbc = user_opts.seek_handle_border_color

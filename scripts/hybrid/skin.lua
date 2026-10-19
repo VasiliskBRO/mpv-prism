@@ -21,6 +21,7 @@
 --   accent_mode    "video" (chameleon: the accent follows the video) | "theme"; default: a skin with its own
 --                  theme keeps it, otherwise chameleon=yes/no of hybrid.conf
 --   chameleon_strength  "vivid": the colors of the video as they are; default: soft
+--   pause_indicator  "prism" | "flash" | "static" | "no": the pause of this skin; default: hybrid.conf
 --   zones_edited - true: the hover zones are items of the skin (kind "zone"), the standard ones
 --              included (zone_bottom, zone_top, zone_volume; a deleted one does not work);
 --              otherwise the standard zones are computed and there are no own zones
@@ -190,6 +191,7 @@ local function normalize(skin)
     skin.volume_dir = skin.volume_dir == "horizontal" and "horizontal" or nil
     skin.accent_mode = (skin.accent_mode == "video" or skin.accent_mode == "theme") and skin.accent_mode or nil
     skin.chameleon_strength = skin.chameleon_strength == "vivid" and "vivid" or nil
+    skin.pause_indicator = ({prism = 1, flash = 1, static = 1, no = 1})[skin.pause_indicator] and skin.pause_indicator or nil
     -- the skin this one was copied from: "Как по умолчанию" goes back to its original
     skin.based_on = type(skin.based_on) == "string" and skin.based_on:match("^[%w_%-]+$") and skin.based_on or nil
     return skin
@@ -228,7 +230,7 @@ local KEY_ORDER = {"id", "custom", "anchor", "x", "w", "r", "bottom", "h", "prio
 local LOOK_KEYS = {"theme", "seekbar_height", "background", "bg_inset", "bg_radius", "bg_color", "bg_alpha", "glow",
                    "handle_color", "handle_border_color",
                    "volume_max", "volume_step", "volume_number", "volume_color", "volume_dir",
-                   "accent_mode", "chameleon_strength"}
+                   "accent_mode", "chameleon_strength", "pause_indicator"}
 M.LOOK_KEYS = LOOK_KEYS
 
 local function json_value(value)

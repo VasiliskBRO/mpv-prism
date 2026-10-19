@@ -1436,6 +1436,9 @@ local LOOK = {
     -- chameleon: the accent follows the video
     accent_mode = {{"Авто (своя тема скина или хамелеон)", nil}, {"Из видео — хамелеон", "video"}, {"Из темы", "theme"}},
     chameleon_strength = {{"Мягко", nil}, {"Ярко, как в кадре", "vivid"}},
+    -- the pause in the middle of the video
+    pause_indicator = {{"Как в настройках", nil}, {"Призма — луч и радуга", "prism"}, {"Вспышка", "flash"},
+                       {"Висит, пока пауза", "static"}, {"Нет", "no"}},
     -- the volume scale
     volume_max = {{"Как в mpv.conf", nil}, {"100%", 100}, {"130%", 130}, {"150%", 150}, {"200%", 200}},
     volume_step = {{"Как в настройках", nil}, {"1%", 1}, {"2%", 2}, {"5%", 5}, {"10%", 10}},
@@ -1551,6 +1554,7 @@ look_menu = function ()
         end
         add("Толщина полосы перемотки", "line_weight", "seekbar_height")
         add("Свечение полосы", "flare", "glow")
+        add("Значок паузы", "pause_circle", "pause_indicator")
         add("Цвет кружка на полосе", "radio_button_checked", "handle_color")
         add("Обводка кружка", "trip_origin", "handle_border_color")
         items[#items].separator = true
