@@ -18,7 +18,7 @@ local SKIP_WORDS = "opening, op, intro, ending, ed, outro, credits, preview, nex
                    "опенинг, интро, заставка, эндинг, титры, превью"
 
 local DEFAULTS = {
-    clips = true, clip_exact = false, clip_dir = "",
+    clips = true, clip_exact = false, clip_dir = "", clip_last = "30с, 1м, 2м, 5м, 10м",
     shot = true,
     undo = true,
     skip = "ask", skip_words = SKIP_WORDS,
@@ -527,6 +527,70 @@ local function clip_end()
     clip_save(a, b)
 end
 
+-- "the last N seconds / minutes": a clip ending right now (Alt+C). In a Twitch live stream the piece
+-- comes from the recording, so it may reach further back than mpv can rewind.
+
+local LAST_DEFAULT = "30с, 1м, 2м, 5м, 10м"
+
+-- "30с, 1м, 1.5м, 90" -> {30, 60, 90, 90} (no unit = seconds; м/m - minutes, ч/h - hours)
+local function last_list()
+    local out = {}
+    for item in (M.get().clip_last .. ","):gmatch("([^,]*),") do
+        local num, unit = item:match("^%s*([%d]+[.,]?%d*)%s*(.-)%s*$")
+        local n = num and tonumber((num:gsub(",", ".")))
+        if n and n > 0 then
+            unit = lower(unit or "")
+            if unit:find("^m") or unit:find("^\208\188") then n = n * 60
+            elseif unit:find("^h") or unit:find("^\209\135") then n = n * 3600 end
+            out[#out + 1] = math.floor(n + 0.5)
+        end
+    end
+    if #out == 0 then out = {30, 60, 120, 300, 600} end
+    return out
+end
+
+local function plural(n, one, few, many)
+    local m10, m100 = n % 10, n % 100
+    if m10 == 1 and m100 ~= 11 then return one end
+    if m10 >= 2 and m10 <= 4 and (m100 < 12 or m100 > 14) then return few end
+    return many
+end
+
+-- 30 -> "За последние 30 секунд", 60 -> "За последнюю минуту", 120 -> "За последние 2 минуты"
+local function last_title(sec)
+    local n, one, few, many, single = sec, "секунду", "секунды", "секунд", "За последнюю секунду"
+    if sec % 3600 == 0 then n, one, few, many, single = sec / 3600, "час", "часа", "часов", "За последний час"
+    elseif sec % 60 == 0 then n, one, few, many, single = sec / 60, "минуту", "минуты", "минут", "За последнюю минуту" end
+    if n == 1 then return single end
+    local word = plural(n, one, few, many)
+    return ((n % 10 == 1 and n % 100 ~= 11) and "За последнюю " or "За последние ") .. n .. " " .. word
+end
+
+local function clip_last(sec)
+    if not M.get().clips then return show("Клипы выключены: «Ещё» → «Дополнения»", 3, nil, "info") end
+    if clip.busy then return show("Клип ещё сохраняется…", 2, nil, "hourglass_top") end
+    local pos = mp.get_property_number("time-pos")
+    if not pos then return end
+    local a = math.max(0, pos - sec)
+    if pos - a < 0.5 then return show("Видео только началось — вырезать пока нечего", 3, nil, "content_cut") end
+    clip.a = nil
+    clip_save(a, pos)
+end
+
+function M.last_menu()
+    return function ()
+        local items = {}
+        for _, sec in ipairs(last_list()) do
+            items[#items + 1] = {title = last_title(sec), icon = "content_cut", action = function () clip_last(sec) end}
+        end
+        items[#items].separator = true
+        items[#items + 1] = {title = "Изменить длины…", icon = "edit", muted = true, action = function ()
+            mp.add_timeout(0.05, M.ask_last)
+        end}
+        return {title = "Клип: последние…", items = items}
+    end
+end
+
 -- screenshot to the clipboard ------------------------------------------------------------------
 
 local function shot()
@@ -719,6 +783,14 @@ local function ask(prompt, default, done)
     end})
 end
 
+-- the list of lengths for Alt+C, typed by the user ("30с, 1м, 5м"); empty = back to the standard one
+function M.ask_last()
+    ask("Длины через запятую (с — секунды, м — минуты):", M.get().clip_last, function (text)
+        M.set("clip_last", text:find("%d") and text or LAST_DEFAULT)
+        show("Alt+C: " .. ucut(M.get().clip_last, 40), 3, nil, "timer")
+    end)
+end
+
 local function toggle(title, icon, key, hint_on)
     -- the state is the hint on the right: accent highlight on every switched-on line would make the menu ripple
     local on = M.get()[key]
@@ -734,10 +806,12 @@ function M.menu()
         local s = M.get()
         local items = {}
         local function add(entry) items[#items + 1] = entry end
-        add({title = "КЛИПЫ — C начало, Shift+C сохранить", header = true})
+        add({title = "КЛИПЫ — C начало, Shift+C сохранить, Alt+C последние", header = true})
         add(toggle("Нарезка клипов", "content_cut", "clips"))
         add({title = "Как резать", icon = "tune", hint = s.clip_exact and "точно, с пережатием" or "быстро, без пережатия",
              action = function () M.set("clip_exact", not M.get().clip_exact) return "keep" end})
+        add({title = "Длины для «последних» (Alt+C)", icon = "timer", hint = ucut(s.clip_last, 24),
+             action = function () mp.add_timeout(0.05, M.ask_last) end})
         -- the end of the path says more than its start (C:\Users\...)
         local tail = clip_dir():match("([^\\]+\\[^\\]+)$") or clip_dir()
         add({title = "Папка для клипов", icon = "folder", hint = "…\\" .. ucut(tail, 26), action = function ()
@@ -804,6 +878,8 @@ function M.init()
     require("pet").on_bar = function () if skip.data then skip_render() end end
     mp.add_key_binding(nil, "clip-start", clip_start)
     mp.add_key_binding(nil, "clip-save", clip_end)
+    -- one length right away, without the menu (for a key or an own button): script-message clip-last 30
+    mp.register_script_message("clip-last", function (sec) if tonumber(sec) then clip_last(tonumber(sec)) end end)
     mp.add_key_binding(nil, "shot-clipboard", shot)
     mp.add_key_binding(nil, "seek-undo", function () jump(jumps.back, jumps.fwd, "back") end, {repeatable = true})
     mp.add_key_binding(nil, "seek-redo", function () jump(jumps.fwd, jumps.back, "fwd") end, {repeatable = true})
