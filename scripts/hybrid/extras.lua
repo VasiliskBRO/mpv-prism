@@ -349,6 +349,8 @@ end
 
 local function clip_done(ok, out, err)
     clip.busy = false
+    if err == "" then err = nil end
+    if not ok and not err then err = "не удалось скачать этот кусок" end
     if ok then
         show("Клип сохранён: " .. ucut(out:match("[^\\]+$") or out, 40), 6,
              {title = "Показать", fn = function () open_folder(out, true) end}, "check_circle")
@@ -365,6 +367,31 @@ local function run(args, done)
         local err = (res.stderr or ""):match("([^\r\n]+)[\r\n]*$") or res.error_string
         done(res.status == 0, err, res.stdout or "")
     end)
+end
+
+-- Leftovers of a failed try (an empty file, yt-dlp's .part): files "<stem>.*" that were not there before it.
+-- leftovers(stem) remembers what is there; the returned function deletes what appeared since.
+-- (Lua's os.remove cannot delete a path with Russian letters on Windows - cmd's del can)
+local function leftovers(stem)
+    local dir, name = stem:match("^(.*)\\([^\\]+)$")
+    if not dir then return function () end end
+    local function ours()
+        local list = {}
+        for _, f in ipairs(utils.readdir(dir, "files") or {}) do
+            if f:sub(1, #name + 1) == name .. "." then list[#list + 1] = f end
+        end
+        return list
+    end
+    local before = {}
+    for _, f in ipairs(ours()) do before[f] = true end
+    return function ()
+        for _, f in ipairs(ours()) do
+            if not before[f] then
+                mp.command_native({name = "subprocess", playback_only = false, capture_stdout = true, capture_stderr = true,
+                                   args = {"cmd", "/d", "/c", "del", "/f", "/q", dir .. "\\" .. f}})
+            end
+        end
+    end
 end
 
 -- a Twitch live stream: the clip comes from the recording (VOD) Twitch keeps writing during the stream;
@@ -402,6 +429,7 @@ local function twitch_live_clip(channel, a, b, base, dir)
             local sa, sb = math.max(0, wall_a - started - 2), wall_b - started + 1
             local probe = free_name(dir, base, ".mp4")
             local stem = probe:sub(1, -5)
+            local cleanup = leftovers(stem)
             local args = {"yt-dlp", "--quiet", "--no-warnings", "--encoding", "utf-8", "-f", ytfmt,
                           "--download-sections", string.format("*%d-%d", sa, sb),
                           "-o", stem .. ".%(ext)s", "--print", "after_move:filepath"}
@@ -415,6 +443,7 @@ local function twitch_live_clip(channel, a, b, base, dir)
                     local file = (out3 or ""):match("([^\r\n]+)[\r\n]*$")
                     if ok3 and file and utils.file_info(file) then return clip_done(true, file) end
                     if tries < 4 then return mp.add_timeout(30, attempt) end
+                    cleanup()
                     fail((err3 or "запись эфира не догнала"):gsub("^ERROR:%s*", ""))
                 end)
             end
@@ -446,16 +475,19 @@ local function clip_save(a, b)
     if is_url(path) then
         local function from_cache(ytdlp_err)
             local out = free_name(dir, base, ".mkv")
+            local cleanup = leftovers(out:sub(1, -5))
             mp.command_native_async({"dump-cache", a, b, out}, function (ok)
                 local done = ok and (utils.file_info(out) or {}).size ~= 0
-                if not done then os.remove(out) end
+                -- a failed dump leaves an empty file behind
+                if not done then cleanup() end
                 -- the reason worth showing is yt-dlp's ("ERROR: ..."), not "error running command"
-                clip_done(done, out, ytdlp_err and ytdlp_err:gsub("^ERROR:%s*", "") or "этого куска нет в кэше")
+                clip_done(done, out, ytdlp_err and ytdlp_err:gsub("^ERROR:%s*", "") or nil)
             end)
         end
         -- a free name first, then "%(ext)s": the extension is up to the site (mp4 / webm / mkv)
         local probe = free_name(dir, base, ".mp4")
         local stem = probe:sub(1, -5)
+        local cleanup = leftovers(stem)
         local args = {"yt-dlp", "--quiet", "--no-warnings", "--no-playlist", "--encoding", "utf-8",
                       "-f", mp.get_property("ytdl-format", "") ~= "" and mp.get_property("ytdl-format") or "bv*+ba/b",
                       "--download-sections", string.format("*%.2f-%.2f", a, b),
@@ -467,6 +499,7 @@ local function clip_save(a, b)
             local out = stdout:match("([^\r\n]+)[\r\n]*$")
             if ok and out and utils.file_info(out) then return clip_done(true, out) end
             msg.warn("clip: yt-dlp failed (" .. tostring(err) .. "), trying the cache")
+            cleanup()
             from_cache(err)
         end)
         return
