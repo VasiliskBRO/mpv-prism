@@ -2737,9 +2737,20 @@ end
 
 -- the pet (pet.lua settings, drawn by mascot.lua): which state it is in, where it sits on top of the bar.
 -- Called when the bar is rebuilt or shown/hidden, on pause, at the end, when nothing plays, around menus
+-- It also tells pet.lua where the bar is (pet.bar) and where the pet sits (pet.rect), and calls pet.on_bar():
+-- the skip button of extras.lua docks next to the pet
 osc_param.update_mascot = function ()
+    local petmod = require "pet"
+    petmod.bar = {top = osc_param.bar_top, visible = state.osc_visible and true or false,
+                  res_x = osc_param.playresx, res_y = osc_param.playresy}
+    petmod.rect = nil
+    osc_param.draw_mascot(petmod)
+    if petmod.on_bar then petmod.on_bar() end
+end
+
+osc_param.draw_mascot = function (petmod)
     local mascot = require "mascot"
-    local pet = require("pet").get()
+    local pet = petmod.get()
     local W, top = osc_param.playresx, osc_param.bar_top
     if not pet.enabled or state.is_image or not top or not W or W <= 0 or (state.menu_open and not state.skin_editing) then
         return mascot.update(nil)
@@ -2755,6 +2766,10 @@ osc_param.update_mascot = function ()
         st = "sleep"
     elseif mp.get_property_native("eof-reached") then
         st = "wave"
+    elseif petmod.attention and petmod.attention == pet.place then
+        -- the skip button is on its side, right next to it: waves over the bar, peeks from the bottom edge
+        -- without the bar (a button in the other corner is none of its business)
+        st = state.osc_visible and "wave" or "peek"
     elseif mp.get_property_native("pause") then
         st = "peek"
     elseif state.osc_visible and not pet.quiet then
@@ -2765,6 +2780,7 @@ osc_param.update_mascot = function ()
     -- nothing plays: it naps on the cards of the start screen (window px there)
     local spot = st == "sleep" and require("start").pet_spot()
     if spot then x1, y2 = spot.x * sx - w / 2, spot.y * sy end
+    if st and not spot then petmod.rect = {x1 = x1, x2 = x1 + w, y2 = y2, place = pet.place} end
     mascot.update({rect = {x1 = x1, y1 = y2 - w, x2 = x1 + w, y2 = y2}, res_x = W, res_y = osc_param.playresy, state = st,
                    accent = user_opts.seekbarfg_color, images = next(pet.images) and pet.images or nil,
                    sx = sx, sy = sy})

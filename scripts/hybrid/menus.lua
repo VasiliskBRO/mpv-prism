@@ -826,6 +826,8 @@ local CATALOG = {
          local in_skin = hooks.skin_current and hooks.skin_current() == "skin"
          return {hint = require("pet").get().enabled and "включён" or T.off_hint, submenu = require("pet").menu(in_skin)}
      end},
+    {id = "extras", group = "Prism", title = "Дополнения", tile = "Дополнения", icon = "extension",
+     make = function () return {hint = require("extras").short(), submenu = require("extras").menu()} end},
     {id = "editor", group = "Prism", title = T.editor, tile = "Редактор", icon = "dashboard_customize", key = "Ctrl+E",
      make = function () return {action = run("script-binding hybrid/editor")} end},
     {id = "menu_editor", group = "Prism", title = "Настроить меню…", tile = "Меню", icon = "tune", key = "Ctrl+Shift+E",
@@ -1050,6 +1052,9 @@ function M.init(renderer, skin_hooks)
     binding("loop", "loop", loops)
     binding("quality", "quality", qualities)
     if hooks.skin_current then binding("skins", "skins", skins_menu) end
+    -- clips, screenshot to the clipboard, undo of jumps, chapter skip (extras.lua)
+    require("extras").init()
+    binding("extras", "extras", require("extras").menu())
     -- the list of live stream qualities arrives a few seconds after the start
     mp.observe_property("user-data/stream-quality", "native", function ()
         if menu.is_open() then menu.refresh() end
