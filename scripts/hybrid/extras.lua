@@ -367,6 +367,62 @@ local function run(args, done)
     end)
 end
 
+-- a Twitch live stream: the clip comes from the recording (VOD) Twitch keeps writing during the stream;
+-- it lags the stream by less than ~20 s. Times of the stream -> wall clock -> seconds since the stream start.
+local function twitch_live_clip(channel, a, b, base, dir)
+    -- how far playback is behind real time: the newest downloaded piece + ~3 s of Twitch's own delay
+    local cache = mp.get_property_native("demuxer-cache-state") or {}
+    local now_pos = mp.get_property_number("time-pos", b)
+    local cache_end = tonumber(cache["cache-end"]) or now_pos
+    local now = os.time()
+    local wall_a = now - (cache_end - a) - 3
+    local wall_b = now - (cache_end - b) - 3
+    -- the stream's own clock means nothing to a person: the name gets the date and time of the moment
+    base = safe_name(mp.get_property("media-title") or channel) .. " эфир " .. os.date("%d.%m %H-%M", wall_a)
+    local ytfmt = mp.get_property("ytdl-format", "") ~= "" and mp.get_property("ytdl-format") or "bv*+ba/b"
+    show("Клип из эфира будет готов примерно через полминуты", 4, nil, "hourglass_top")
+
+    local function fail(text)
+        clip_done(false, nil, text)
+    end
+    -- 1) when the stream started
+    run({"yt-dlp", "-j", "--no-warnings", "--skip-download", "https://www.twitch.tv/" .. channel}, function (ok, err, out)
+        local info = ok and utils.parse_json(out or "")
+        local started = info and tonumber(info.timestamp)
+        if not started then return fail("не узнал, когда начался эфир" .. (err and (": " .. err) or "")) end
+        -- 2) the newest recording of the channel: the one being written now (its length ~ time since the start)
+        run({"yt-dlp", "--flat-playlist", "-I", "1", "--no-warnings", "--print", "%(id)s %(duration)s",
+             "https://www.twitch.tv/" .. channel .. "/videos?filter=archive&sort=time"}, function (ok2, err2, out2)
+            local id, dur = (out2 or ""):match("v?(%d+)%s+([%d.]+)")
+            if not ok2 or not id then return fail("у канала нет записей эфира" .. (err2 and (": " .. err2) or "")) end
+            if math.abs((os.time() - started) - tonumber(dur)) > 900 then
+                return fail("стример не сохраняет записи — клип из эфира не вырезать")
+            end
+            -- 2 s of margin before (the stream delay is a guess), 1 s after
+            local sa, sb = math.max(0, wall_a - started - 2), wall_b - started + 1
+            local probe = free_name(dir, base, ".mp4")
+            local stem = probe:sub(1, -5)
+            local args = {"yt-dlp", "--quiet", "--no-warnings", "--encoding", "utf-8", "-f", ytfmt,
+                          "--download-sections", string.format("*%d-%d", sa, sb),
+                          "-o", stem .. ".%(ext)s", "--print", "after_move:filepath"}
+            if M.get().clip_exact then args[#args + 1] = "--force-keyframes-at-cuts" end
+            args[#args + 1] = "https://www.twitch.tv/videos/" .. id
+            -- 3) the recording needs ~20 s to catch up; a few tries, half a minute apart
+            local tries = 0
+            local function attempt()
+                tries = tries + 1
+                run(args, function (ok3, err3, out3)
+                    local file = (out3 or ""):match("([^\r\n]+)[\r\n]*$")
+                    if ok3 and file and utils.file_info(file) then return clip_done(true, file) end
+                    if tries < 4 then return mp.add_timeout(30, attempt) end
+                    fail((err3 or "запись эфира не догнала"):gsub("^ERROR:%s*", ""))
+                end)
+            end
+            mp.add_timeout(math.max(0, wall_b + 25 - os.time()), attempt)
+        end)
+    end)
+end
+
 local function clip_save(a, b)
     local path = mp.get_property("path")
     if not path then return end
@@ -378,6 +434,12 @@ local function clip_save(a, b)
     local base = safe_name(title) .. " " .. clock(a, ".") .. "-" .. clock(b, ".")
     clip.busy = true
     show("Сохраняю клип " .. clock(a) .. " – " .. clock(b) .. "…", 0, nil, "hourglass_top")
+
+    -- a Twitch live stream (twitch.tv/<channel>): from the recording Twitch writes meanwhile
+    local channel = path:match("^https?://[%w.]*twitch%.tv/([%w_]+)/?$")
+    if channel and channel ~= "videos" and channel ~= "directory" then
+        return twitch_live_clip(channel, a, b, base, dir)
+    end
 
     -- an online video (Twitch, YouTube, a link to a file): yt-dlp downloads only this piece.
     -- (mpv's own dump-cache cannot write Twitch HLS: "sample rate not set" - it is only the fallback)
