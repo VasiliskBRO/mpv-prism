@@ -198,7 +198,7 @@ mp.set_key_bindings({
 
 mp.observe_property("osd-dimensions", "native", function () if note.text then note_render() end end)
 
--- the skip button of a chapter (Opening at the bottom left, Ending / Preview at the bottom right) -------------
+-- the skip button: one place for everything (bottom right), the label says what it skips -------------------
 -- Above the bar when it is shown, near the bottom edge otherwise. When the pet sits on that side, the button
 -- docks right next to it on the inner side and the pet points at it (pet.attention: waves / peeks).
 -- A thin line along its bottom counts down the time it stays.
@@ -265,8 +265,8 @@ local function skip_render()
     if d.side == "right" then cx1, cx2 = x2 - bw * frac, x2 end
     add(string.format("{\\rDefault\\an7\\pos(0,0)\\bord0\\shad0\\blur0\\1c&H%s&\\1a&H00&\\clip(%.1f,%.1f,%.1f,%.1f)}%s",
         bgr, cx1, y2 - 3 * sc, cx2, y2, pill))
-    add(string.format("{\\rDefault\\an4\\pos(%f,%f)\\fnMaterial Icons Round\\fs%d\\bord0\\shad0\\1c&H%s&}fast_forward",
-        x1 + pad, (y1 + y2) / 2, icon_fs, bgr))
+    add(string.format("{\\rDefault\\an4\\pos(%f,%f)\\fnMaterial Icons Round\\fs%d\\bord0\\shad0\\1c&H%s&}%s",
+        x1 + pad, (y1 + y2) / 2, icon_fs, bgr, d.icon or "fast_forward"))
     add(string.format("{\\rDefault\\an4\\pos(%f,%f)\\fnSegoe UI Semibold\\fs%d\\bord0\\shad0\\1c&HFFFFFF&}%s",
         x1 + pad + icon_fs + gap, (y1 + y2) / 2, fs, ass_escape(d.label)))
     skip.osd.res_x, skip.osd.res_y, skip.osd.z = w, h, 1050
@@ -286,7 +286,7 @@ function M.skip_mouse(_, pos)
     end
 end
 
--- data = {label, side = "left" | "right", seconds, fn}
+-- data = {label, icon, side = "left" | "right", seconds, fn}
 local function skip_show(data)
     skip_hide()
     data.total = data.seconds
@@ -558,35 +558,70 @@ local function skippable(title)
     return nil
 end
 
-local chapter = {prev = -1}
+-- SponsorBlock (scripts/sponsorblock.lua, skip_categories empty) only marks its segments as chapter pairs
+-- "<Category> segment start (id6)" / "... end (id6)"; these categories get the button
+local SB_LABEL = {sponsor = "Пропустить рекламу", selfpromo = "Пропустить саморекламу",
+                  interaction = "Пропустить «подпишись»", intro = "Пропустить заставку",
+                  outro = "Пропустить концовку", preview = "Пропустить превью"}
 
-mp.register_event("file-loaded", function () chapter.prev = -1 end)
+-- what the chapter ch can skip: {label, icon, target (time) or next_file, short (for the auto note)}, or nil
+local function skip_target(list, ch)
+    local entry = list[ch + 1]
+    if not entry then return nil end
+    local title = entry.title or ""
+    local has_next = mp.get_property_number("playlist-pos", 0) < mp.get_property_number("playlist-count", 1) - 1
+    -- a SponsorBlock segment: to its own end
+    local cat, id = title:match("^(.-) segment start %((%w+)%)$")
+    if cat then
+        cat = cat:lower():gsub(" ", "_")
+        if not SB_LABEL[cat] then return nil end
+        for _, e in ipairs(list) do
+            if e.title == title:gsub(" start %(", " end (") then
+                if cat == "outro" and has_next then
+                    return {label = "Следующее видео", icon = "skip_next", next_file = true, short = "Концовка"}
+                end
+                return {label = SB_LABEL[cat], icon = "fast_forward", target = e.time,
+                        short = SB_LABEL[cat]:gsub("^Пропустить ", "")}
+            end
+        end
+        return nil
+    end
+    local name = skippable(title)
+    if not name then return nil end
+    -- the ending or the preview with another file waiting in the playlist: straight to it
+    if (name == "Эндинг" or name == "Превью") and has_next then
+        return {label = "Следующая серия", icon = "skip_next", next_file = true, short = name}
+    end
+    return {label = KIND_LABEL[name] or ("Пропустить «" .. name .. "»"), icon = "fast_forward", short = name}
+end
+
+local function do_skip(t, ch)
+    if t.next_file then return mp.commandv("playlist-next") end
+    if t.target then return mp.commandv("seek", t.target, "absolute") end
+    if mp.get_property_number("chapter") == ch then mp.commandv("add", "chapter", "1") end
+end
 
 mp.observe_property("chapter", "number", function (_, ch)
-    local prev = chapter.prev
-    chapter.prev = ch or -1
     -- left the chapter (skipped, jumped away, the next file): its button goes away
     if skip.data and skip.data.ch ~= ch then skip_hide() end
     if not ch or ch < 0 or M.get().skip == "off" then return end
-    -- only when playback came here by itself, not after a jump into the chapter
-    if prev ~= ch - 1 or mp.get_time() - jumps.seek_time < 1 then return end
     local list = mp.get_property_native("chapter-list") or {}
     local entry = list[ch + 1]
-    local name = entry and skippable(entry.title)
-    if not name then return end
+    if not entry then return end
+    -- only when playback came to the start of the chapter by itself, not after a jump into it
+    -- (and not when SponsorBlock adds chapters later and the numbers shift)
+    local pos = mp.get_property_number("time-pos", 0)
+    if pos - entry.time > 1.5 or mp.get_time() - jumps.seek_time < 1 then return end
+    local t = skip_target(list, ch)
+    if not t then return end
     if M.get().skip == "auto" then
-        mp.commandv("add", "chapter", "1")
-        show(name .. " пропущен · Ctrl+Z — вернуть", 3, nil, "fast_forward")
-    else
-        local next_entry = list[ch + 2]
-        local length = next_entry and (next_entry.time - entry.time) or (mp.get_property_number("duration", 0) - entry.time)
-        -- the opening is skipped from the left corner, the ending and the preview from the right one
-        local side = name == "Опенинг" and "left" or "right"
-        local label = KIND_LABEL[name] or ("Пропустить: " .. name)
-        skip_show({label = label, side = side, ch = ch, seconds = math.max(4, math.min(10, length)), fn = function ()
-            if mp.get_property_number("chapter") == ch then mp.commandv("add", "chapter", "1") end
-        end})
+        do_skip(t, ch)
+        if not t.next_file then show(t.short .. " — пропущено · Ctrl+Z вернуть", 3, nil, "fast_forward") end
+        return
     end
+    local stop = t.target or (list[ch + 2] and list[ch + 2].time) or mp.get_property_number("duration", 0)
+    skip_show({label = t.label, icon = t.icon, side = "right", ch = ch,
+               seconds = math.max(4, math.min(10, stop - entry.time)), fn = function () do_skip(t, ch) end})
 end)
 
 -- the settings menu ------------------------------------------------------------------------------
@@ -607,7 +642,7 @@ local function toggle(title, icon, key, hint_on)
             action = function () M.set(key, not M.get()[key]) return "keep" end}
 end
 
-local SKIP_MODES = {{"ask", "Спрашивать — кнопка «Пропустить»"}, {"auto", "Пропускать сам"}, {"off", "Выключено"}}
+local SKIP_MODES = {{"ask", "Кнопка справа внизу (или Enter)"}, {"auto", "Пропускать сам"}, {"off", "Выключено"}}
 local SKIP_SHORT = {ask = "кнопка", auto = "сам", off = "выкл"}
 
 function M.menu()
@@ -640,7 +675,7 @@ function M.menu()
         add(toggle("Скриншот в буфер — Ctrl+S", "content_copy", "shot"))
         add(toggle("Отмена перемотки — Ctrl+Z / Ctrl+Y", "undo", "undo"))
         add(toggle("Плейлист из папки", "playlist_play", "autoplaylist", "соседние видео в очереди"))
-        add({title = "Пропуск опенинга и эндинга", icon = "fast_forward", hint = SKIP_SHORT[s.skip], submenu = function ()
+        add({title = "Пропуск: опенинг, эндинг, реклама", icon = "fast_forward", hint = SKIP_SHORT[s.skip], submenu = function ()
             local list = {}
             for _, m in ipairs(SKIP_MODES) do
                 list[#list + 1] = {title = m[2], active = M.get().skip == m[1],
@@ -657,9 +692,11 @@ function M.menu()
             end}
             list[#list + 1] = {title = "Вернуть стандартный список", icon = "restart_alt", muted = true,
                                action = function () M.set("skip_words", SKIP_WORDS) return "keep" end}
-            list[#list + 1] = {title = "Работает, если в видео есть главы с такими названиями", icon = "info", muted = true,
-                               action = function () return "keep" end}
-            return {title = "Пропуск опенинга и эндинга", items = list}
+            list[#list + 1] = {title = "Главы с такими названиями и реклама YouTube (SponsorBlock)", icon = "info",
+                               muted = true, action = function () return "keep" end}
+            list[#list + 1] = {title = "На эндинге, если дальше есть видео, — «Следующая серия»", icon = "skip_next",
+                               muted = true, action = function () return "keep" end}
+            return {title = "Пропуск", items = list}
         end, separator = true})
         add({title = "DISCORD", header = true})
         add(toggle("Статус «Смотрит» в Discord", "forum", "discord"))
