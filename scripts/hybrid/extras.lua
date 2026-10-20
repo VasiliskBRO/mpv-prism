@@ -198,6 +198,124 @@ mp.set_key_bindings({
 
 mp.observe_property("osd-dimensions", "native", function () if note.text then note_render() end end)
 
+-- the skip button of a chapter (Opening at the bottom left, Ending / Preview at the bottom right) -------------
+-- Above the bar when it is shown, near the bottom edge otherwise. When the pet sits on that side, the button
+-- docks right next to it on the inner side and the pet points at it (pet.attention: waves / peeks).
+-- A thin line along its bottom counts down the time it stays.
+
+local skip = {osd = mp.create_osd_overlay("ass-events"), data = nil, tick = nil, hover = false, box = nil}
+
+local function skip_hide()
+    if skip.tick then skip.tick:kill() skip.tick = nil end
+    local had = skip.data ~= nil
+    skip.data, skip.box, skip.hover = nil, nil, false
+    skip.osd:remove()
+    mp.disable_key_bindings("prism_extras_skip")
+    mp.unobserve_property(M.skip_mouse)
+    if had then
+        local pet = require "pet"
+        pet.attention = nil
+        pet.on_change()
+    end
+end
+
+local function skip_render()
+    local d = skip.data
+    if not d then return end
+    local left = d.until_t - mp.get_time()
+    if left <= 0 then return skip_hide() end
+    local dim = mp.get_property_native("osd-dimensions") or {}
+    local w, h = dim.w or 0, dim.h or 0
+    if w <= 0 or h <= 0 then return end
+    local pet = require "pet"
+    local bar = pet.bar or {}
+    local kx = (bar.res_x and bar.res_x > 0) and w / bar.res_x or h / 720
+    local ky = (bar.res_y and bar.res_y > 0) and h / bar.res_y or h / 720
+    local sc = math.max(0.7, math.min(2, h / 720))
+
+    local fs = math.floor(17 * sc + 0.5)
+    local icon_fs = math.floor(22 * sc + 0.5)
+    local pad, gap, bh = 20 * sc, 10 * sc, 44 * sc
+    local bw = pad + icon_fs + gap + ulen(d.label) * fs * 0.5 + pad
+    local y2 = (bar.visible and bar.top) and (bar.top * ky - 16 * sc) or (h - 40 * sc)
+    local margin = 32 * sc
+    local x1
+    local rect = pet.rect
+    local docked = rect and rect.place == d.side
+    if d.side == "left" then
+        x1 = docked and (rect.x2 * kx + 12 * sc) or margin
+    else
+        x1 = (docked and (rect.x1 * kx - 12 * sc) or (w - margin)) - bw
+    end
+    local x2, y1 = x1 + bw, y2 - bh
+    skip.box = {x1, y1, x2, y2}
+
+    local accent = (require("menu").accent() or "#8C7CFF"):gsub("#", "")
+    local bgr = accent:sub(5, 6) .. accent:sub(3, 4) .. accent:sub(1, 2)
+    local r = bh / 2
+    local pill = string.format(PILL, x1 + r, y1, x1, y1, x1, y2, x1 + r, y2, x2 - r, y2, x2, y2, x2, y1, x2 - r, y1)
+    local ass = {}
+    local function add(s) ass[#ass + 1] = s end
+    -- a dark glassy capsule; on hover it gets denser and its outline takes the accent
+    add(string.format("{\\rDefault\\an7\\pos(0,0)\\bord%.1f\\shad0\\blur0\\1c&H000000&\\1a&H%s&\\3c&H%s&\\3a&H%s&}%s",
+        1.5 * sc, skip.hover and "18" or "40", skip.hover and bgr or "FFFFFF", skip.hover and "00" or "A0", pill))
+    -- the countdown: an accent line along the bottom, shrinking towards the outer edge
+    local frac = math.max(0, math.min(1, left / d.total))
+    local cx1, cx2 = x1, x1 + bw * frac
+    if d.side == "right" then cx1, cx2 = x2 - bw * frac, x2 end
+    add(string.format("{\\rDefault\\an7\\pos(0,0)\\bord0\\shad0\\blur0\\1c&H%s&\\1a&H00&\\clip(%.1f,%.1f,%.1f,%.1f)}%s",
+        bgr, cx1, y2 - 3 * sc, cx2, y2, pill))
+    add(string.format("{\\rDefault\\an4\\pos(%f,%f)\\fnMaterial Icons Round\\fs%d\\bord0\\shad0\\1c&H%s&}fast_forward",
+        x1 + pad, (y1 + y2) / 2, icon_fs, bgr))
+    add(string.format("{\\rDefault\\an4\\pos(%f,%f)\\fnSegoe UI Semibold\\fs%d\\bord0\\shad0\\1c&HFFFFFF&}%s",
+        x1 + pad + icon_fs + gap, (y1 + y2) / 2, fs, ass_escape(d.label)))
+    skip.osd.res_x, skip.osd.res_y, skip.osd.z = w, h, 1050
+    skip.osd.data = table.concat(ass, "\n")
+    skip.osd:update()
+    mp.set_mouse_area(x1, y1, x2, y2, "prism_extras_skip")
+    mp.enable_key_bindings("prism_extras_skip")
+end
+
+function M.skip_mouse(_, pos)
+    if not skip.box or type(pos) ~= "table" then return end
+    local b = skip.box
+    local over = pos.hover ~= false and pos.x >= b[1] and pos.x <= b[3] and pos.y >= b[2] and pos.y <= b[4]
+    if over ~= skip.hover then
+        skip.hover = over
+        skip_render()
+    end
+end
+
+-- data = {label, side = "left" | "right", seconds, fn}
+local function skip_show(data)
+    skip_hide()
+    data.total = data.seconds
+    data.until_t = mp.get_time() + data.seconds
+    skip.data = data
+    local pet = require "pet"
+    pet.attention = data.side
+    pet.on_change() -- redraws the pet, then pet.on_bar() draws the button next to it
+    skip_render()
+    skip.tick = mp.add_periodic_timer(0.1, skip_render)
+    mp.observe_property("mouse-pos", "native", M.skip_mouse)
+end
+
+local function skip_press()
+    local d = skip.data
+    if not d then return end
+    skip_hide()
+    d.fn()
+end
+
+mp.set_key_bindings({
+    {"mbtn_left", skip_press},
+    {"mbtn_left_dbl", "ignore"},
+    {"enter", skip_press},
+    {"kp_enter", skip_press},
+}, "prism_extras_skip", "force")
+
+mp.observe_property("osd-dimensions", "native", function () if skip.data then skip_render() end end)
+
 -- clips --------------------------------------------------------------------------------------
 
 local clip = {a = nil, busy = false}
@@ -409,6 +527,9 @@ local KIND = {
     {"Превью", {"preview", "next episode", "превью"}},
 }
 
+local KIND_LABEL = {["Опенинг"] = "Пропустить опенинг", ["Эндинг"] = "Пропустить эндинг",
+                    ["Превью"] = "Пропустить превью"}
+
 local function words(s)
     local list = {}
     for w in (s .. ","):gmatch("([^,]*),") do
@@ -444,6 +565,8 @@ mp.register_event("file-loaded", function () chapter.prev = -1 end)
 mp.observe_property("chapter", "number", function (_, ch)
     local prev = chapter.prev
     chapter.prev = ch or -1
+    -- left the chapter (skipped, jumped away, the next file): its button goes away
+    if skip.data and skip.data.ch ~= ch then skip_hide() end
     if not ch or ch < 0 or M.get().skip == "off" then return end
     -- only when playback came here by itself, not after a jump into the chapter
     if prev ~= ch - 1 or mp.get_time() - jumps.seek_time < 1 then return end
@@ -457,9 +580,12 @@ mp.observe_property("chapter", "number", function (_, ch)
     else
         local next_entry = list[ch + 2]
         local length = next_entry and (next_entry.time - entry.time) or (mp.get_property_number("duration", 0) - entry.time)
-        show(name, math.max(3, math.min(10, length)), {title = "Пропустить", fn = function ()
+        -- the opening is skipped from the left corner, the ending and the preview from the right one
+        local side = name == "Опенинг" and "left" or "right"
+        local label = KIND_LABEL[name] or ("Пропустить: " .. name)
+        skip_show({label = label, side = side, ch = ch, seconds = math.max(4, math.min(10, length)), fn = function ()
             if mp.get_property_number("chapter") == ch then mp.commandv("add", "chapter", "1") end
-        end}, "fast_forward")
+        end})
     end
 end)
 
@@ -553,6 +679,8 @@ end
 
 function M.init()
     apply_autoplaylist()
+    -- the bar was shown / hidden / rebuilt or the pet moved: the skip button follows
+    require("pet").on_bar = function () if skip.data then skip_render() end end
     mp.add_key_binding(nil, "clip-start", clip_start)
     mp.add_key_binding(nil, "clip-save", clip_end)
     mp.add_key_binding(nil, "shot-clipboard", shot)
