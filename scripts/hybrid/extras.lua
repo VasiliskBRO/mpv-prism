@@ -363,7 +363,7 @@ local function run(args, done)
                              capture_stdout = true, capture_stderr = true}, function (_, res)
         res = res or {}
         local err = (res.stderr or ""):match("([^\r\n]+)[\r\n]*$") or res.error_string
-        done(res.status == 0, err)
+        done(res.status == 0, err, res.stdout or "")
     end)
 end
 
@@ -379,11 +379,33 @@ local function clip_save(a, b)
     clip.busy = true
     show("Сохраняю клип " .. clock(a) .. " – " .. clock(b) .. "…", 0, nil, "hourglass_top")
 
-    -- a stream or an online video: what is already in the cache, without re-encoding
+    -- an online video (Twitch, YouTube, a link to a file): yt-dlp downloads only this piece.
+    -- (mpv's own dump-cache cannot write Twitch HLS: "sample rate not set" - it is only the fallback)
     if is_url(path) then
-        local out = free_name(dir, base, ".mkv")
-        mp.command_native_async({"dump-cache", a, b, out}, function (ok, _, err)
-            clip_done(ok and utils.file_info(out) ~= nil, out, err or "этого куска нет в кэше")
+        local function from_cache(ytdlp_err)
+            local out = free_name(dir, base, ".mkv")
+            mp.command_native_async({"dump-cache", a, b, out}, function (ok)
+                local done = ok and (utils.file_info(out) or {}).size ~= 0
+                if not done then os.remove(out) end
+                -- the reason worth showing is yt-dlp's ("ERROR: ..."), not "error running command"
+                clip_done(done, out, ytdlp_err and ytdlp_err:gsub("^ERROR:%s*", "") or "этого куска нет в кэше")
+            end)
+        end
+        -- a free name first, then "%(ext)s": the extension is up to the site (mp4 / webm / mkv)
+        local probe = free_name(dir, base, ".mp4")
+        local stem = probe:sub(1, -5)
+        local args = {"yt-dlp", "--quiet", "--no-warnings", "--no-playlist", "--encoding", "utf-8",
+                      "-f", mp.get_property("ytdl-format", "") ~= "" and mp.get_property("ytdl-format") or "bv*+ba/b",
+                      "--download-sections", string.format("*%.2f-%.2f", a, b),
+                      "-o", stem .. ".%(ext)s", "--print", "after_move:filepath"}
+        -- exact: cut on the very frames (re-encoded by yt-dlp's ffmpeg, slower)
+        if M.get().clip_exact then args[#args + 1] = "--force-keyframes-at-cuts" end
+        args[#args + 1] = path
+        run(args, function (ok, err, stdout)
+            local out = stdout:match("([^\r\n]+)[\r\n]*$")
+            if ok and out and utils.file_info(out) then return clip_done(true, out) end
+            msg.warn("clip: yt-dlp failed (" .. tostring(err) .. "), trying the cache")
+            from_cache(err)
         end)
         return
     end
