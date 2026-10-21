@@ -291,6 +291,28 @@ local function targets(block, owner, out, depth)
     return out
 end
 
+-- dragged with the mouse (menu.lua): before / after another block of the same list, or into a folder / row of tiles
+local function drop(item, target, where)
+    local b, t = item.drag_id, target.drag_id
+    if where == "into" then
+        if t.type == "tiles" and b.type ~= "item" then
+            mp.osd_message("В ряд плиток можно положить только пункт", 2)
+            return
+        end
+        return change(function ()
+            local owner, i = find_parent(b)
+            table.remove(children(owner), i)
+            table.insert(children(t), b)
+        end)
+    end
+    return change(function ()
+        local owner, i = find_parent(b)
+        table.remove(children(owner), i)
+        local owner2, j = find_parent(t)
+        table.insert(children(owner2), where == "after" and j + 1 or j, b)
+    end)
+end
+
 local function move_to_screen(block)
     return function ()
         local items = {}
@@ -522,6 +544,9 @@ local function rows_of(owner, items)
     for _, b in ipairs(children(owner)) do
         local d = describe(b)
         d.block = b
+        -- dragged with the mouse; a folder or a row of tiles takes it in when dropped on its middle
+        d.drag_id = b
+        d.drop_into = b.type == "folder" or b.type == "tiles"
         -- opens its settings like a submenu, but without the "›" on every row (the hint says what it is)
         d.action = function ()
             api.menu.push(block_screen(b))
@@ -540,7 +565,7 @@ container_screen = function (owner)
         if #items == 0 then items[1] = {title = "Пусто — добавь что-нибудь ниже", muted = true} end
         items[#items].separator = true
         items[#items + 1] = {title = "Добавить…", icon = "add", submenu = add_screen(owner)}
-        return {title = describe(owner).title, items = items, keys = keys_for()}
+        return {title = describe(owner).title, items = items, keys = keys_for(), drag = drop}
     end
 end
 
@@ -667,8 +692,8 @@ root_screen = function ()
     items[#items + 1] = {title = "Шаг назад", icon = "undo", hint = #E.undo > 0 and "Ctrl+Z" or "нечего отменять",
         muted = #E.undo == 0, action = function () M.undo() return "stay" end}
     items[#items + 1] = {title = "Начать с шаблона…", icon = "auto_awesome", submenu = templates_screen}
-    items[#items + 1] = {title = "Alt+↑↓ — двигать · Del — убрать · Ctrl+Z — шаг назад", icon = "info", muted = true}
-    return {title = "Меню «" .. E.def.name .. "»", items = items, keys = keys_for()}
+    items[#items + 1] = {title = "Тяни мышью или Alt+↑↓ · Del — убрать · Ctrl+Z — назад", icon = "info", muted = true}
+    return {title = "Меню «" .. E.def.name .. "»", items = items, keys = keys_for(), drag = drop}
 end
 
 -- public -----------------------------------------------------------------------------------------
