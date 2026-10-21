@@ -3149,7 +3149,56 @@ layouts["skin"] = function ()
     -- under the bar: the dark fade (default), a rounded plate ("capsule") or nothing
     setup_bg_elements(0, H, W, bar_h, user_opts.fade_transparency_strength, user_opts.window_fade_transparency_strength)
     local background = skin.background or "gradient"
-    if background ~= "gradient" then elements["osc_fade_bg"].visible = false end
+    -- the fades of a skin are smooth gradients set in the editor; the old blurred boxes stay hidden
+    elements["osc_fade_bg"].visible = false
+    if elements["window_bar_alpha_bg"] then elements["window_bar_alpha_bg"].visible = false end
+    do
+        -- Layers pressed to the window edge, each shorter than the one before: a point is darkened by all
+        -- layers reaching it, so every layer gets the alpha that makes the sum follow the curve. Unlike strips
+        -- side by side, a layer has only one edge inside the gradient: no seams between them.
+        -- Each layer is its own element, so it shows and hides with its group like the rest of the bar.
+        local function fade(side, group)
+            local p = side == "bottom" and "fade_b_" or "fade_t_"
+            local height = H * (skin[p .. "height"] or (side == "bottom" and 45 or 25)) / 100
+            local strength = (skin[p .. "strength"] or (side == "bottom" and 90 or 50)) / 100
+            if height <= 0 or strength <= 0 then return end
+            local curve = skin[p .. "curve"]
+            local color = skin[p .. "color"] or "#000000"
+            if color == "accent" then color = user_opts.seekbarfg_color end
+            local style = "{\\blur0.8\\bord0\\1c&H" .. osc_color_convert(color) .. "&}"
+            local n = math.max(12, math.min(48, math.floor(height / 4)))
+            -- how much light gets through in band m (1 at the edge ... n inside)
+            local function through(m)
+                if m > n then return 1 end
+                local t = (m - 0.5) / n
+                local k
+                if curve == "linear" then k = 1 - t
+                elseif curve == "plateau" then k = 1 - t * t * (3 - 2 * t)
+                elseif curve == "edge" then k = (1 - t) ^ 3
+                else k = (1 - t) ^ 1.7 end
+                return 1 - strength * k
+            end
+            for m = 1, n do
+                local depth = height * m / n
+                local below = through(m + 1)
+                local pass = below > 0.0001 and math.min(1, through(m) / below) or 0
+                local name = "skin_fade_" .. side .. m
+                new_element(name, "box")
+                local lo = add_layout(name)
+                lo.geometry = {x = 0, y = side == "bottom" and (H - depth) or 0, an = 7, w = W, h = depth}
+                lo.style = style
+                lo.layer = 10
+                lo.alpha[1] = math.floor(255 * pass + 0.5)
+                lo.group = group
+            end
+        end
+        if skin.fade_bottom == "on" or (skin.fade_bottom == nil and background == "gradient") then fade("bottom") end
+        if skin.fade_top == "bar" then
+            fade("top")
+        elseif skin.fade_top == nil and window_controls_enabled() and (user_opts.show_window_title or user_opts.window_controls) then
+            fade("top", "top")
+        end
+    end
     if background == "capsule" then
         local inset = skin.bg_inset or 16
         new_element("skin_capsule_bg", "box")

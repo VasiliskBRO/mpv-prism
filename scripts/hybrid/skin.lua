@@ -9,6 +9,13 @@
 --     background     under the bar: "gradient" (dark fade, default), "capsule" (rounded plate), "none"
 --     bg_inset       capsule: gap to the window edges (virtual px); bg_radius - corner radius;
 --     bg_color       capsule color "#RRGGBB"; bg_alpha - capsule transparency 0..255
+--     fade_bottom    the dark fade at the bottom: "on" (also under a capsule), "off"; default: with background "gradient"
+--     fade_top       the fade at the top: "bar" (whenever the bar shows), "off"; default: with the window title
+--     fade_b_height / fade_t_height      how far it reaches, % of the window height (default 45 / 25)
+--     fade_b_strength / fade_t_strength  how dark at the very edge, % (default 90 / 50)
+--     fade_b_curve / fade_t_curve        "linear" | "plateau" (dense, soft end) | "edge" (only at the edge);
+--                                        default: soft, like the old blurred fade
+--     fade_b_color / fade_t_color        "#RRGGBB" or "accent" (follows the chameleon); default: black
 --     glow           true: the played part of the seekbar glows in the accent color
 --     handle_color   color of the seekbar handle "#RRGGBB" (default: from the theme)
 --     handle_border_color  its inner border "#RRGGBB", "none" - no border (default: from the theme)
@@ -183,6 +190,18 @@ local function normalize(skin)
     skin.bg_radius = tonumber(skin.bg_radius)
     skin.bg_alpha = tonumber(skin.bg_alpha)
     if type(skin.bg_color) ~= "string" or not skin.bg_color:match("^#%x%x%x%x%x%x$") then skin.bg_color = nil end
+    skin.fade_bottom = (skin.fade_bottom == "on" or skin.fade_bottom == "off") and skin.fade_bottom or nil
+    skin.fade_top = (skin.fade_top == "bar" or skin.fade_top == "off") and skin.fade_top or nil
+    for _, side in ipairs({"b", "t"}) do
+        local h, s = tonumber(skin["fade_" .. side .. "_height"]), tonumber(skin["fade_" .. side .. "_strength"])
+        skin["fade_" .. side .. "_height"] = h and math.max(1, math.min(100, h)) or nil
+        skin["fade_" .. side .. "_strength"] = s and math.max(0, math.min(100, s)) or nil
+        local curve = skin["fade_" .. side .. "_curve"]
+        skin["fade_" .. side .. "_curve"] = ({linear = 1, plateau = 1, edge = 1})[curve] and curve or nil
+        local color = skin["fade_" .. side .. "_color"]
+        if type(color) ~= "string" or not (color == "accent" or color:match("^#%x%x%x%x%x%x$")) then color = nil end
+        skin["fade_" .. side .. "_color"] = color
+    end
     skin.glow = skin.glow == true or nil
     if type(skin.handle_color) ~= "string" or not skin.handle_color:match("^#%x%x%x%x%x%x$") then skin.handle_color = nil end
     local hbc = skin.handle_border_color
