@@ -35,6 +35,8 @@
 
 Needs **mpv 0.40+**. Optional: **Python** (SponsorBlock), **streamlink** (Twitch/Kick live), **yt-dlp** (links).
 
+Want to send videos from websites to Prism with one click? See **[mpv browser button](https://github.com/VasiliskBRO/mpv-browser-button)** (Windows).
+
 ## Cheat sheet
 
 | I want | Do |

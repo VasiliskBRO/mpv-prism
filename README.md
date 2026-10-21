@@ -38,6 +38,8 @@
 Нужен **mpv 0.40+**. По желанию: **Python** — для SponsorBlock, **[streamlink](https://streamlink.github.io/)** —
 для эфиров Twitch/Kick, **[yt-dlp](https://github.com/yt-dlp/yt-dlp)** — для видео по ссылке.
 
+Хочешь открывать видео с сайтов в Prism одной кнопкой — **[mpv browser button](https://github.com/VasiliskBRO/mpv-browser-button)**.
+
 ## 🎮 Шпаргалка
 
 | Хочу | Что сделать |
