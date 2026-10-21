@@ -215,7 +215,7 @@
 
 ## Кнопка в браузере
 
-Отдельный маленький проект **[mpv browser button](https://github.com/VasiliskBRO/mpv-browser-button)** (только Windows):
+Отдельный маленький проект **[mpv browser button](https://github.com/VasiliskBRO/mpv-browser-button)** (Windows; Linux — бета):
 наводишь мышь на видео на любом сайте → сверху появляется «⏵ mpv» → ролик продолжается в Prism с той же секунды,
 а в браузере встаёт на паузу. Удобно вместо «картинки в картинке» браузера: окно Prism со всеми его клавишами,
 клипами и пропуском опенинга.
