@@ -5,6 +5,7 @@
 --   skip       chapters named Opening / OP / Ending / Preview… are skipped (ask = a button, auto = at once)
 --   autoplaylist  the other files of the folder join the playlist (mpv option autocreate-playlist)
 --   discord    the status in Discord - the script scripts/prism-discord.lua reads these settings
+--   opacity    a see-through window, Ctrl+Alt+Up / Down (opacity.lua)
 -- Settings: ~~state/hybrid-extras.json; a change is announced with "script-message prism-extras-changed".
 -- extras.init() is called by menus.init(); extras.menu() is the settings menu (menus.lua item "extras").
 
@@ -24,6 +25,7 @@ local DEFAULTS = {
     skip = "ask", skip_words = SKIP_WORDS,
     autoplaylist = true,
     discord = true, discord_title = true,
+    opacity = 0, opacity_mode = "always",
 }
 
 local settings
@@ -40,6 +42,9 @@ local function load()
         if type(data[k]) == type(v) then settings[k] = data[k] end
     end
     if settings.skip ~= "ask" and settings.skip ~= "auto" and settings.skip ~= "off" then settings.skip = "ask" end
+    if settings.opacity_mode ~= "always" and settings.opacity_mode ~= "ontop" and settings.opacity_mode ~= "hover" then
+        settings.opacity_mode = "always"
+    end
 end
 
 local function save()
@@ -889,6 +894,9 @@ function M.menu()
                                muted = true, action = function () return "keep" end}
             return {title = "Пропуск", items = list}
         end, separator = true})
+        add({title = "ОКНО", header = true})
+        add({title = "Прозрачность окна", icon = "opacity", hint = require("opacity").hint(),
+             submenu = require("opacity").menu(), separator = true})
         add({title = "DISCORD", header = true})
         add(toggle("Статус «Смотрит» в Discord", "forum", "discord"))
         add({title = "Что видят друзья", icon = "visibility",
@@ -902,11 +910,13 @@ function M.short()
     local s, n = M.get(), 0
     for _, k in ipairs({"clips", "shot", "undo", "autoplaylist", "discord"}) do if s[k] then n = n + 1 end end
     if s.skip ~= "off" then n = n + 1 end
-    return n .. " из 6"
+    if s.opacity > 0 then n = n + 1 end
+    return n .. " из 7"
 end
 
 function M.init()
     apply_autoplaylist()
+    require("opacity").init()
     -- the bar was shown / hidden / rebuilt or the pet moved: the skip button follows
     require("pet").on_bar = function () if skip.data then skip_render() end end
     mp.add_key_binding(nil, "clip-start", clip_start)

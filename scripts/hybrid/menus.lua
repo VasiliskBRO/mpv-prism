@@ -789,6 +789,10 @@ local CATALOG = {
      key = "Ctrl+P", cond = is_playing, make = function () return {action = run("script-binding hybrid/pip")} end},
     {id = "ontop", group = "Управление", title = "Поверх всех окон", tile = "Поверх", icon = "push_pin",
      make = function () return {active = prop("ontop", false), action = stay("cycle ontop")} end},
+    {id = "opacity", group = "Управление", title = "Прозрачность окна", tile = "Прозрачность", icon = "opacity",
+     make = function ()
+         return {hint = require("opacity").hint(), submenu = require("opacity").menu()}
+     end},
     {id = "mute", group = "Управление", title = "Без звука", tile = "Звук", icon = "volume_off", key = "M",
      cond = function (c) return c.tracks.audio > 0 end,
      make = function ()
@@ -1058,6 +1062,7 @@ function M.init(renderer, skin_hooks)
     require("extras").init()
     binding("extras", "extras", require("extras").menu())
     binding("clip-last", "clip-last", require("extras").last_menu())
+    binding("opacity-menu", "opacity", require("opacity").menu())
     -- the list of live stream qualities arrives a few seconds after the start
     mp.observe_property("user-data/stream-quality", "native", function ()
         if menu.is_open() then menu.refresh() end
