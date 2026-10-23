@@ -1422,6 +1422,19 @@ local LOOK = {
     theme = {{"Как в настройках", nil}, {"Prism (фиолетовый)", "prism"}, {"Оранжевый", "orange"}, {"Синий", "blue"},
              {"Фиолетовый", "purple"}, {"Зелёный", "green"}, {"Красный", "red"}, {"Розовый", "pink"}},
     background = {{"Затемнение снизу", nil}, {"Капсула (скруглённая плашка)", "capsule"}, {"Без подложки", "none"}},
+    -- the fades (main.lua, skin layout): bottom and top each on its own
+    fade_bottom = {{"С подложкой «Затемнение»", nil}, {"Всегда (и под капсулой)", "on"}, {"Выключено", "off"}},
+    fade_top = {{"Когда виден заголовок окна", nil}, {"Всегда вместе с панелью", "bar"}, {"Выключено", "off"}},
+    fade_b_height = {{"15 %", 15}, {"25 %", 25}, {"Как обычно (45 %)", nil}, {"60 %", 60}, {"70 %", 70},
+                     {"Во всё окно", 100}},
+    fade_t_height = {{"10 %", 10}, {"15 %", 15}, {"Как обычно (25 %)", nil}, {"40 %", 40}, {"55 %", 55}},
+    fade_b_strength = {{"Еле заметно (25 %)", 25}, {"Слабо (45 %)", 45}, {"Средне (65 %)", 65},
+                       {"Сильно (80 %)", 80}, {"Как обычно (90 %)", nil}, {"Почти чёрное (100 %)", 100}},
+    fade_t_strength = {{"Еле заметно (25 %)", 25}, {"Как обычно (50 %)", nil}, {"Средне (65 %)", 65},
+                       {"Сильно (85 %)", 85}, {"Почти чёрное (100 %)", 100}},
+    fade_b_curve = {{"Мягко (как обычно)", nil}, {"Ровно, по прямой", "linear"}, {"Плотно, с мягким краем", "plateau"},
+                    {"Только у самого края", "edge"}},
+    fade_b_color = {{"Чёрный (как обычно)", nil}, {"Цвет акцента", "accent"}},
     seekbar_height = {{"Как в настройках", nil}, {"Тонкая", "small"}, {"Средняя", "medium"}, {"Толстая", "large"},
                       {"Очень толстая", "xlarge"}},
     glow = {{"Выключено", nil}, {"Включено", true}},
@@ -1456,7 +1469,10 @@ for _, c in ipairs(COLORS) do
     table.insert(LOOK.volume_color, c)
 end
 -- look fields that also take "Свой цвет…"
-local LOOK_COLOR_KEYS = {bg_color = true, handle_color = true, handle_border_color = true, volume_color = true}
+LOOK.fade_t_curve, LOOK.fade_t_color = LOOK.fade_b_curve, LOOK.fade_b_color
+
+local LOOK_COLOR_KEYS = {bg_color = true, handle_color = true, handle_border_color = true, volume_color = true,
+                         fade_b_color = true, fade_t_color = true}
 
 skin_choice = function (title, key)
     return function ()
@@ -1542,6 +1558,14 @@ end
 local PAUSE_SHORT = {prism = "призма", flash = "вспышка", static = "висит", no = "нет"}
 local START_SHORT = {prism = "Prism", mpv = "mpv", no = "пусто"}
 
+-- "снизу · сверху", "только снизу", "нет"
+local function fade_summary(s)
+    local bottom = s.fade_bottom == "on" or (s.fade_bottom == nil and (s.background or "gradient") == "gradient")
+    local top = s.fade_top ~= "off"
+    if bottom and top then return "снизу · сверху" end
+    return bottom and "только снизу" or (top and "только сверху" or "нет")
+end
+
 look_menu = function ()
     return function ()
         local function folder(title, icon, hint, fill)
@@ -1578,6 +1602,27 @@ look_menu = function ()
                 end
                 add("Толщина полосы перемотки", "line_weight", "seekbar_height")
                 add("Свечение полосы", "flare", "glow")
+            end),
+            -- the dark fades at the bottom and the top of the window, each on its own
+            folder("Затемнение", "gradient", fade_summary(s), function (add, list)
+                local bottom_on = s.fade_bottom == "on" or (s.fade_bottom == nil and (s.background or "gradient") == "gradient")
+                list[#list + 1] = {title = "СНИЗУ", header = true}
+                add("Когда", "vertical_align_bottom", "fade_bottom")
+                if bottom_on then
+                    add("Высота", "height", "fade_b_height")
+                    add("Сила у края", "contrast", "fade_b_strength")
+                    add("Плавность", "show_chart", "fade_b_curve")
+                    add("Цвет", "format_color_fill", "fade_b_color")
+                end
+                list[#list].separator = true
+                list[#list + 1] = {title = "СВЕРХУ", header = true}
+                add("Когда", "vertical_align_top", "fade_top")
+                if s.fade_top ~= "off" then
+                    add("Высота", "height", "fade_t_height")
+                    add("Сила у края", "contrast", "fade_t_strength")
+                    add("Плавность", "show_chart", "fade_t_curve")
+                    add("Цвет", "format_color_fill", "fade_t_color")
+                end
             end),
             folder("Громкость", "volume_up", find_name(LOOK.volume_max, s.volume_max), function (_, list)
                 volume_scale_items(function (entry) list[#list + 1] = entry end, M.open_look)

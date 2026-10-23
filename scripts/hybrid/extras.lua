@@ -457,6 +457,21 @@ local function twitch_live_clip(channel, a, b, base, dir)
     end)
 end
 
+-- The channel of a Twitch stream piped in by a launcher (Streamlink Twitch GUI, "streamlink --player mpv"):
+-- mpv's parent process is streamlink, started with twitch.tv/<channel>. Else the title "<channel> - <game> - ..."
+-- (only when the channel's name is in Latin letters).
+local function piped_channel(done)
+    local ps = "$p=(Get-CimInstance Win32_Process -Filter ('ProcessId=' + " .. utils.getpid() .. ")).ParentProcessId;" ..
+               "(Get-CimInstance Win32_Process -Filter ('ProcessId=' + $p)).CommandLine"
+    run({"powershell", "-NoProfile", "-NonInteractive", "-Command", ps}, function (_, _, out)
+        local ch
+        for c in (out or ""):gmatch("twitch%.tv/([%w_]+)") do ch = c end
+        if not ch then ch = (mp.get_property("media-title") or ""):match("^([%w_]+) %- ") end
+        if ch == "videos" or ch == "directory" then ch = nil end
+        done(ch and ch:lower())
+    end)
+end
+
 local function clip_save(a, b)
     local path = mp.get_property("path")
     if not path then return end
@@ -473,6 +488,14 @@ local function clip_save(a, b)
     local channel = path:match("^https?://[%w.]*twitch%.tv/([%w_]+)/?$")
     if channel and channel ~= "videos" and channel ~= "directory" then
         return twitch_live_clip(channel, a, b, base, dir)
+    end
+
+    -- a stream piped in (the path is "-"): no file to cut and no cache (--cache=no) - only a Twitch recording helps
+    if path == "-" or path:find("^fd://") then
+        return piped_channel(function (ch)
+            if ch then return twitch_live_clip(ch, a, b, base, dir) end
+            clip_done(false, nil, "нет ссылки на эфир — открой его через Ctrl+V")
+        end)
     end
 
     -- an online video (Twitch, YouTube, a link to a file): yt-dlp downloads only this piece.
@@ -614,6 +637,8 @@ local function clip_last(sec)
     clip.a = nil
     clip_save(a, pos)
 end
+
+M.clip_last = clip_last
 
 function M.last_menu()
     return function ()
@@ -921,8 +946,6 @@ function M.init()
     require("pet").on_bar = function () if skip.data then skip_render() end end
     mp.add_key_binding(nil, "clip-start", clip_start)
     mp.add_key_binding(nil, "clip-save", clip_end)
-    -- one length right away, without the menu (for a key or an own button): script-message clip-last 30
-    mp.register_script_message("clip-last", function (sec) if tonumber(sec) then clip_last(tonumber(sec)) end end)
     mp.add_key_binding(nil, "shot-clipboard", shot)
     mp.add_key_binding(nil, "seek-undo", function () jump(jumps.back, jumps.fwd, "back") end, {repeatable = true})
     mp.add_key_binding(nil, "seek-redo", function () jump(jumps.fwd, jumps.back, "fwd") end, {repeatable = true})

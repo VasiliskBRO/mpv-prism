@@ -20,6 +20,9 @@
 --           place = "center" | "cursor" | "side"}; submenus without a look take their parent's
 --   keys = {["alt+up"] = function(item) ... end, ...}: extra keys for the selected item
 --          (alt+up, alt+down, del, ctrl+z, f2); return "keep" to refresh
+--   drag = function(item, target, where): rows with a drag_id can be dragged with the mouse onto other
+--          rows with a drag_id; where = "before" | "after" | "into" (only onto a row with drop_into = true:
+--          a folder). Return "keep" to refresh; the moved row stays selected (found by its drag_id).
 
 local assdraw = require "mp.assdraw"
 local icons = require "icons"
@@ -57,6 +60,8 @@ local anchor = nil          -- mouse position when the menu opened (place = "cur
 local mouse = {x = -1, y = -1, moved = false}
 local pressed = {}          -- mouse buttons pressed while the menu was open
 local geo = nil             -- geometry of the last render (for hit testing)
+-- a row being dragged: {fi, item, y0, active, target (fi), where, timer (scrolling at the edges)}
+local drag = nil
 local res = {w = 1280, h = 720, sx = 1, sy = 1}
 
 -- helpers ---------------------------------------------------------------------------
@@ -169,6 +174,7 @@ local function build(level, keep_position)
     level.title = spec.title or ""
     level.items = spec.items or {}
     level.on_back = spec.on_back
+    level.drag = spec.drag
     level.look = spec.look
     level.keys = spec.keys
     if keep_position then
@@ -348,7 +354,7 @@ local function render()
     local items_y = y1 + title_h + search_h + pad
 
     geo = {x1 = x1, y1 = y1, x2 = x2, y2 = y2, title_h = title_h, avail = avail, rows = {}, L = L,
-           visible = rows_from(level, level.scroll, avail, L)}
+           visible = rows_from(level, level.scroll, avail, L), items_y1 = items_y, items_y2 = items_y + content_h}
 
     local ass = assdraw.ass_new()
 
@@ -396,7 +402,7 @@ local function render()
         local item = level.filtered[fi]
         local rh = row_height(item, L)
         local cy = iy + rh / 2
-        local selected = fi == level.selected
+        local selected = fi == level.selected and not (drag and drag.active)
         local hit = {fi = fi, y1 = iy, y2 = iy + rh, header = item.header}
 
         if item.header then
@@ -442,8 +448,49 @@ local function render()
             layer(ass, "#FFFFFF", 0xE0)
             rect(ass, x1 + 12, iy + rh - 0.5, x2 - 12, iy + rh + 0.5, 0)
         end
+        if drag and drag.active then
+            if fi == drag.fi then
+                -- the row on its way: its old place stays, faded
+                layer(ass, cfg.bg, 0x50)
+                rect(ass, x1 + 2, iy, x2 - 2, iy + rh, 0)
+            end
+            -- where it goes is drawn after the dragged row, so the row never hides it
+            if fi == drag.target then drag.mark = {y1 = iy, y2 = iy + rh} end
+        end
         geo.rows[#geo.rows + 1] = hit
         iy = iy + rh
+    end
+
+    -- the dragged row follows the mouse, then the mark of where it goes
+    if drag and drag.active then
+        local item = drag.item
+        local rh = item_h
+        -- a little below the mouse: the line of where it goes stays visible above it
+        local gy = clamp(items_y - rh / 2, mouse.y + 6, res.h - rh - 2)
+        layer(ass, cfg.bg, 0x20, string.format("\\bord1.5\\3c&H%s&", bgr(L.accent)))
+        rect(ass, x1 + 10, gy, x2 - 10, gy + rh, math.min(6, L.radius))
+        local tx = x1 + 22
+        if item.icon then
+            icon(ass, x1 + 32, gy + rh / 2, item.icon, L.font_size + 4, L.accent)
+            tx = x1 + 50
+        end
+        text(ass, tx, gy + rh / 2, 4, esc(item.title), L.font_size, L.fg,
+            string.format("\\clip(%f,%f,%f,%f)", tx, gy, x2 - 16, gy + rh))
+        local m = drag.mark
+        drag.mark = nil
+        if m and drag.where == "into" then
+            -- into a folder: an accent frame around it
+            layer(ass, L.accent, 0xFF, string.format("\\bord2\\3c&H%s&", bgr(L.accent)))
+            rect(ass, x1 + 6, m.y1 + 2, x2 - 6, m.y2 - 2, math.min(6, L.radius))
+        elseif m then
+            -- between rows: a line with a dot at its start
+            local ly = drag.where == "before" and m.y1 or m.y2
+            layer(ass, L.accent, 0)
+            rect(ass, x1 + 14, ly - 1.5, x2 - 10, ly + 1.5, 1.5)
+            -- each drawing in its own event: two in one event stand side by side like letters
+            layer(ass, L.accent, 0)
+            rect(ass, x1 + 8, ly - 4, x1 + 16, ly + 4, 4)
+        end
     end
 
     -- scrollbar
@@ -532,6 +579,65 @@ local function on_back_arrow()
         and mouse.y >= geo.y1 and mouse.y <= geo.y1 + geo.title_h
 end
 
+-- dragging ------------------------------------------------------------------------------
+
+local function drag_stop()
+    if drag and drag.timer then drag.timer:kill() end
+    drag = nil
+end
+
+-- where the dragged row would go: the row under the mouse and before / after / into it
+local function drag_target()
+    drag.target, drag.where = nil, nil
+    if not geo or mouse.x < geo.x1 or mouse.x > geo.x2 then return end
+    local level = current()
+    for _, row in ipairs(geo.rows) do
+        if mouse.y >= row.y1 and mouse.y < row.y2 then
+            local item = level.filtered[row.fi]
+            if not item or item.drag_id == nil or row.fi == drag.fi then return end
+            local k = (mouse.y - row.y1) / (row.y2 - row.y1)
+            if item.drop_into and k > 0.3 and k < 0.7 then drag.where = "into"
+            else drag.where = k < 0.5 and "before" or "after" end
+            -- right next to its own place nothing would change
+            if (drag.where == "after" and row.fi == drag.fi - 1) or (drag.where == "before" and row.fi == drag.fi + 1) then
+                drag.where = nil
+                return
+            end
+            drag.target = row.fi
+            return
+        end
+    end
+end
+
+-- near the top or bottom edge of the list it scrolls by itself
+local function drag_scroll()
+    if not (drag and drag.active and geo) then return end
+    local level = current()
+    local step = 0
+    if mouse.y < geo.items_y1 + geo.L.item_height then step = -1
+    elseif mouse.y > geo.items_y2 - geo.L.item_height then step = 1 end
+    if step == 0 then return end
+    local before = level.scroll
+    level.scroll = math.max(0, (level.scroll or 0) + step)
+    render()
+    if level.scroll ~= before then drag_target() render() end
+end
+
+local function drag_drop()
+    local d = drag
+    drag_stop()
+    local level = current()
+    if not (d.target and d.where and level.drag) then return render() end
+    local result = level.drag(d.item, level.filtered[d.target], d.where)
+    if result ~= "keep" then return render() end
+    M.refresh()
+    level = current()
+    for i, row in ipairs(level.filtered) do
+        if row.drag_id == d.item.drag_id then select_row(level, i) ensure_visible(level) break end
+    end
+    render()
+end
+
 local unbind
 
 function M.close()
@@ -540,6 +646,7 @@ function M.close()
     stack = {}
     root_id = nil
     geo = nil
+    drag_stop()
     unbind()
     overlay.data = ""
     overlay:remove()
@@ -650,21 +757,53 @@ local function level_key(name)
     end
 end
 
+local function click()
+    if on_back_arrow() then return back() end
+    local fi, chip = item_at_mouse()
+    if fi then
+        current().selected, current().chip = fi, chip
+        activate(fi, chip)
+    elseif not in_panel() then
+        M.close()
+    end
+end
+
+local left_click = mouse_button("left", click)
+
 local bindings = {
     {"mouse_move", function ()
         update_mouse()
-        if mouse.moved then hover() render() end
-    end},
-    {"mbtn_left", mouse_button("left", function ()
-        if on_back_arrow() then return back() end
-        local fi, chip = item_at_mouse()
-        if fi then
-            current().selected, current().chip = fi, chip
-            activate(fi, chip)
-        elseif not in_panel() then
-            M.close()
+        if not mouse.moved then return end
+        if drag then
+            if not drag.active and math.abs(mouse.y - drag.y0) > 6 then
+                drag.active = true
+                drag.timer = mp.add_periodic_timer(0.1, drag_scroll)
+            end
+            if drag.active then
+                drag_target()
+                return render()
+            end
         end
-    end), {complex = true}},
+        hover() render()
+    end},
+    {"mbtn_left", function (info)
+        -- pressing a row of a level with drag may start dragging it; a short click stays a click
+        if info.event == "down" then
+            update_mouse()
+            local level, fi = current(), item_at_mouse()
+            local item = fi and level.filtered[fi]
+            if level.drag and item and item.drag_id ~= nil and not item.chips then
+                drag = {fi = fi, item = item, y0 = mouse.y}
+            end
+        elseif info.event == "up" and drag and drag.active then
+            pressed.left = nil
+            update_mouse()
+            return drag_drop()
+        elseif info.event == "up" then
+            drag_stop()
+        end
+        left_click(info)
+    end, {complex = true}},
     {"mbtn_right", mouse_button("right", back), {complex = true}},
     {"mbtn_back", back},
     {"mbtn_left_dbl", function () end},
@@ -716,6 +855,11 @@ local bindings = {
     end, {repeatable = true}},
     {"ctrl+bs", function () set_search("") end},
     {"esc", function ()
+        if drag then
+            drag_stop()
+            pressed.left = nil
+            return render()
+        end
         if current().search ~= "" then set_search("") else M.close() end
     end},
     {"any_unicode", function (info)
@@ -726,10 +870,16 @@ local bindings = {
     end, {repeatable = true, complex = true}},
 }
 
+-- while a menu is open, holding the button and moving drags rows, not the mpv window
+-- (mpv would also release the button in the middle of such a drag)
+local window_dragging = nil
+
 local function bind()
     for i, b in ipairs(bindings) do
         mp.add_forced_key_binding(b[1], "hybrid-menu-" .. i, b[2], b[3])
     end
+    window_dragging = mp.get_property_native("window-dragging")
+    mp.set_property_native("window-dragging", false)
 end
 
 unbind = function ()
@@ -737,6 +887,8 @@ unbind = function ()
         mp.remove_key_binding("hybrid-menu-" .. i)
     end
     pressed = {}
+    if window_dragging ~= nil then mp.set_property_native("window-dragging", window_dragging) end
+    window_dragging = nil
 end
 
 -- public API -----------------------------------------------------------------------------

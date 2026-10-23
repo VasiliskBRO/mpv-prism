@@ -1061,7 +1061,12 @@ function M.init(renderer, skin_hooks)
     -- clips, screenshot to the clipboard, undo of jumps, chapter skip (extras.lua)
     require("extras").init()
     binding("extras", "extras", require("extras").menu())
-    binding("clip-last", "clip-last", require("extras").last_menu())
+    -- a key binding also answers the script message of the same name: "script-message clip-last 30"
+    -- (a key or an own button) cuts one length right away, without the menu
+    mp.add_key_binding(nil, "clip-last", function (sec)
+        if tonumber(sec) then return require("extras").clip_last(tonumber(sec)) end
+        menu.open("clip-last", require("extras").last_menu())
+    end)
     binding("opacity-menu", "opacity", require("opacity").menu())
     -- the list of live stream qualities arrives a few seconds after the start
     mp.observe_property("user-data/stream-quality", "native", function ()
