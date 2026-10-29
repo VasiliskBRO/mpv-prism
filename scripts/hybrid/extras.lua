@@ -331,8 +331,10 @@ local function clip_dir()
     return dir
 end
 
+-- "/select," and the path go as two arguments: mpv quotes an argument with spaces as a whole,
+-- and explorer reads "/select,C:\a b.mkv" in quotes as a folder it cannot find (opens Documents)
 local function open_folder(path, select)
-    if select then mp.commandv("run", "explorer", "/select," .. path)
+    if select then mp.commandv("run", "explorer", "/select,", path)
     else mp.commandv("run", "explorer", path) end
 end
 

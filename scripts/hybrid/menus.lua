@@ -811,7 +811,7 @@ local CATALOG = {
      end},
     {id = "show_in_folder", group = "Прочее", title = T.show_in_folder, tile = "Папка", icon = "folder",
      cond = function (c) return c.path ~= nil end,
-     make = function (c) return {action = function () mp.commandv("run", "explorer", "/select," .. c.path) end} end},
+     make = function (c) return {action = function () mp.commandv("run", "explorer", "/select,", c.path) end} end},
     {id = "stats", group = "Прочее", title = T.stats, icon = "query_stats", key = "I", cond = is_playing,
      make = function () return {action = run("script-binding stats/display-stats-toggle")} end},
     {id = "quit_later", group = "Прочее", title = "Выйти и запомнить место", tile = "Выйти (запомнить)",
