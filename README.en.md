@@ -33,7 +33,7 @@
    on Windows, `~/.config/mpv/` on Linux / macOS.
 3. **Remove other OSC scripts** (uosc, ModernZ…) from `scripts`, otherwise you get two bars.
 
-Needs **mpv 0.40+**. Optional: **Python** (SponsorBlock), **streamlink** (Twitch/Kick live), **yt-dlp** (links).
+Needs **mpv 0.40+**. Optional: **Python** (SponsorBlock), **streamlink** (Twitch/Kick/GoodGame live), **yt-dlp** (links).
 
 Want to send videos from websites to Prism with one click? See **[mpv browser button](https://github.com/VasiliskBRO/mpv-browser-button)** (Windows, Linux beta).
 

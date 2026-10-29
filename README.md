@@ -36,7 +36,7 @@
 3. **Убери другие оболочки** (uosc, ModernZ и т.п.) из папки `scripts`, иначе будет две панели сразу.
 
 Нужен **mpv 0.40+**. По желанию: **Python** — для SponsorBlock, **[streamlink](https://streamlink.github.io/)** —
-для эфиров Twitch/Kick, **[yt-dlp](https://github.com/yt-dlp/yt-dlp)** — для видео по ссылке.
+для эфиров Twitch/Kick/GoodGame, **[yt-dlp](https://github.com/yt-dlp/yt-dlp)** — для видео по ссылке.
 
 Хочешь открывать видео с сайтов в Prism одной кнопкой — **[mpv browser button](https://github.com/VasiliskBRO/mpv-browser-button)**.
 
@@ -105,7 +105,7 @@
 **Две панели сразу / панель не появляется.** В папке `scripts` осталась другая оболочка (uosc,
 ModernZ, osc.lua) — убери её. На Windows mpv читает настройки и из папки рядом с `mpv.exe` — проверь обе.
 
-**Не меняется качество стрима.** Для эфиров Twitch/Kick нужен streamlink, для роликов — yt-dlp.
+**Не меняется качество стрима.** Для эфиров Twitch/Kick/GoodGame нужен streamlink, для роликов — yt-dlp.
 Пункт «Качество» появляется только у стримов и видео по ссылке.
 
 **Сломал панель в редакторе.** `Ctrl+E` → «Как по умолчанию» → «Сохранить». Или меню → «Скины» → «Стандарт».
