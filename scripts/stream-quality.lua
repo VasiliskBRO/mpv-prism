@@ -6,6 +6,9 @@
 -- Choosing another quality restarts streamlink in the same window.
 -- Online videos opened through yt-dlp (Twitch VODs, YouTube...) are reopened in another format
 -- at the same position.
+-- Direct files in several qualities (AnimeLIB from the browser button) come with a per-file option
+-- --script-opts-append=stream-quality-variants=2160/1080/720; the other qualities are the same
+-- address with another number before ".mp4". The chosen quality is kept for the next files.
 --
 -- The hybrid menu reads user-data/stream-quality and sends "script-message stream-quality-set <id>".
 -- Options (script-opts/stream-quality.conf or --script-opts=stream-quality-quality=720p60):
@@ -258,6 +261,42 @@ local function start_streamlink(url, quality, done)
     end)
 end
 
+-- direct files in several qualities --------------------------------------------------------
+
+local files_choice = nil   -- quality chosen in the menu (number), also for the next files; nil = best
+
+local function file_variants()
+    local opts = mp.get_property_native("options/script-opts") or {}
+    local list = {}
+    for q in (opts["stream-quality-variants"] or ""):gmatch("%d+") do list[#list + 1] = tonumber(q) end
+    table.sort(list, function (a, b) return a > b end)
+    return list
+end
+
+-- called from on_load: open the chosen quality and fill the menu; false if the file has no variants
+local function setup_file_variants()
+    local url = mp.get_property("stream-open-filename") or ""
+    local playing = tonumber(url:match("_(%d+)%.mp4$"))
+    local variants = file_variants()
+    if not playing or #variants < 2 then return false end
+    -- the chosen quality or the nearest lower one; the lowest if all are higher
+    local want = variants[1]
+    if files_choice then
+        want = variants[#variants]
+        for _, q in ipairs(variants) do
+            if q <= files_choice then want = q break end
+        end
+    end
+    if want ~= playing then
+        mp.set_property("stream-open-filename", (url:gsub("_%d+%.mp4$", "_" .. want .. ".mp4")))
+    end
+    local list = {{id = "auto", title = T.auto, hint = variants[1] .. "p"}}
+    for _, q in ipairs(variants) do list[#list + 1] = {id = tostring(q), title = q .. "p"} end
+    data = {kind = "files", current = files_choice and tostring(want) or "auto", list = list}
+    publish()
+    return true
+end
+
 -- mpv hooks --------------------------------------------------------------------------------
 
 mp.add_hook("on_load", 9, function (hook)
@@ -301,6 +340,7 @@ mp.add_hook("on_load", 9, function (hook)
         overrides[path or ""] = nil
     end
     pending_video = nil
+    setup_file_variants()
 end)
 
 mp.register_event("end-file", function ()
@@ -377,7 +417,7 @@ local function video_items(json, path)
 end
 
 mp.register_event("file-loaded", function ()
-    if live.url then return end
+    if live.url or data.kind == "files" then return end
     local path = mp.get_property("path")
     local result = mp.get_property_native("user-data/mpv/ytdl/json-subprocess-result")
     local json = result and utils.parse_json(result.stdout or "")
@@ -426,6 +466,13 @@ mp.register_script_message("stream-quality-set", function (id)
         overrides[path] = format
         pending_video = {path = path, format = format, start = mp.get_property_number("time-pos")}
         mp.osd_message(string.format(T.switching, id == "auto" and T.auto or id), 3)
+        reload_current()
+    elseif data.kind == "files" then
+        local q = tonumber(id)
+        if id ~= "auto" and not q then return end
+        files_choice = q
+        pending_video = {path = mp.get_property("path"), start = mp.get_property_number("time-pos")}
+        mp.osd_message(string.format(T.switching, q and q .. "p" or T.auto), 3)
         reload_current()
     end
 end)
