@@ -478,11 +478,25 @@ local function clip_save(a, b)
     local dir = clip_dir()
     mp.command_native({name = "subprocess", args = {"cmd", "/d", "/c", "mkdir", dir}, playback_only = false,
                        capture_stdout = true, capture_stderr = true})
+    -- a GoodGame live stream: the site keeps no recording (and yt-dlp gets 403), only mpv's cache has it,
+    -- so the piece starts no earlier than the cache does
+    local goodgame = path:find("^https?://[%w.]*goodgame%.ru/") ~= nil
+    local trimmed = false
+    if goodgame then
+        local ranges = (mp.get_property_native("demuxer-cache-state") or {})["seekable-ranges"] or {}
+        local first = ranges[1] and ranges[1].start
+        for _, r in ipairs(ranges) do
+            if r.start <= b and r["end"] >= b then first = r.start end
+        end
+        if first and a < first then a, trimmed = math.ceil(first), true end
+        if b - a < 0.5 then return show("В памяти плеера пока нечего вырезать", 3, nil, "content_cut") end
+    end
     local title = mp.get_property("media-title") or "clip"
     if not is_url(path) then title = (path:match("[^\\/]+$") or title):gsub("%.[^.]+$", "") end
     local base = safe_name(title) .. " " .. clock(a, ".") .. "-" .. clock(b, ".")
     clip.busy = true
-    show("Сохраняю клип " .. clock(a) .. " – " .. clock(b) .. "…", 0, nil, "hourglass_top")
+    show("Сохраняю клип " .. clock(a) .. " – " .. clock(b) .. (trimmed and " (в памяти плеера только это)" or "") .. "…",
+         0, nil, "hourglass_top")
 
     -- a Twitch live stream (twitch.tv/<channel>): from the recording Twitch writes meanwhile
     local channel = path:match("^https?://[%w.]*twitch%.tv/([%w_]+)/?$")
@@ -499,7 +513,8 @@ local function clip_save(a, b)
     end
 
     -- an online video (Twitch, YouTube, a link to a file): yt-dlp downloads only this piece.
-    -- (mpv's own dump-cache cannot write Twitch HLS: "sample rate not set" - it is only the fallback)
+    -- (mpv's own dump-cache cannot write Twitch HLS: "sample rate not set" - it is only the fallback;
+    -- a GoodGame stream comes from streamlink as MPEG-TS, which the cache writes fine)
     if is_url(path) then
         local function from_cache(ytdlp_err)
             local out = free_name(dir, base, ".mkv")
@@ -512,6 +527,7 @@ local function clip_save(a, b)
                 clip_done(done, out, ytdlp_err and ytdlp_err:gsub("^ERROR:%s*", "") or nil)
             end)
         end
+        if goodgame then return from_cache() end
         -- a free name first, then "%(ext)s": the extension is up to the site (mp4 / webm / mkv)
         local probe = free_name(dir, base, ".mp4")
         local stem = probe:sub(1, -5)

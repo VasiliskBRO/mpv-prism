@@ -1,6 +1,7 @@
 -- Stream quality: switch the quality of a live stream or an online video without leaving mpv.
 --
--- Live Twitch/Kick channels (twitch.tv/<name>, kick.com/<name>) are played through streamlink:
+-- Live Twitch/Kick/GoodGame channels (twitch.tv/<name>, kick.com/<name>, goodgame.ru/<name>)
+-- are played through streamlink:
 -- it runs as a local HTTP server (ads on Twitch are skipped by streamlink) and mpv reads from it.
 -- Choosing another quality restarts streamlink in the same window.
 -- Online videos opened through yt-dlp (Twitch VODs, YouTube...) are reopened in another format
@@ -45,6 +46,14 @@ local RESERVED = {
     messages = true, turbo = true, prime = true, jobs = true, store = true, moderator = true,
 }
 
+-- goodgame.ru/<page> pages that are not channels
+local GG_RESERVED = {
+    games = true, streams = true, news = true, clips = true, channels = true, channel = true, player = true,
+    user = true, users = true, profile = true, settings = true, search = true, api = true, help = true,
+    faq = true, about = true, rules = true, support = true, premium = true, shop = true, cups = true,
+    tournaments = true, login = true, register = true, chat = true, embed = true, blog = true,
+}
+
 math.randomseed(os.time() + (mp.get_property_number("pid") or 0))
 
 -- logs left by earlier runs (on quit streamlink still holds its log, so it cannot be removed);
@@ -72,9 +81,21 @@ local function publish()
     mp.set_property_native(DATA, data)
 end
 
+-- goodgame.ru/<channel> (and the old goodgame.ru/channel/<channel>); channel names may have "-" and "."
+local function goodgame_url(url)
+    local host, path = url:match("^[Hh][Tt][Tt][Pp][Ss]?://([^/]+)/([^?#]*)")
+    if not host or host:lower():gsub("^www%.", "") ~= "goodgame.ru" then return nil end
+    path = path:gsub("/$", ""):gsub("^channel/", "")
+    local name = path:match("^[%w_.-]+$")
+    if not name or GG_RESERVED[name:lower()] then return nil end
+    return "https://goodgame.ru/" .. name
+end
+
 local function live_url(url)
     if not url then return nil end
     url = url:gsub("^ytdl://", "")
+    local gg = goodgame_url(url)
+    if gg then return gg end
     local host, name, rest = url:match("^[Hh][Tt][Tt][Pp][Ss]?://([^/]+)/([%w_]+)(.*)$")
     if not host or not (rest == "" or rest == "/" or rest:match("^/?%?")) then return nil end
     host = host:lower():gsub("^www%.", ""):gsub("^m%.", "")
