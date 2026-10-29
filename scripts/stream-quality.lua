@@ -6,9 +6,9 @@
 -- Choosing another quality restarts streamlink in the same window.
 -- Online videos opened through yt-dlp (Twitch VODs, YouTube...) are reopened in another format
 -- at the same position.
--- Direct files in several qualities (AnimeLIB from the browser button) come with a per-file option
+-- Direct files in several qualities (AnimeLIB and Kodik from the browser button) come with a per-file option
 -- --script-opts-append=stream-quality-variants=2160/1080/720; the other qualities are the same
--- address with another number before ".mp4". The chosen quality is kept for the next files.
+-- address with another number before ".mp4" (see FILE_QUALITY). The chosen quality is kept for the next files.
 --
 -- The hybrid menu reads user-data/stream-quality and sends "script-message stream-quality-set <id>".
 -- Options (script-opts/stream-quality.conf or --script-opts=stream-quality-quality=720p60):
@@ -273,10 +273,20 @@ local function file_variants()
     return list
 end
 
+-- where the quality sits in the address: AnimeLIB ".../name_720.mp4", Kodik ".../720.mp4:hls:manifest.m3u8"
+local FILE_QUALITY = {
+    {pattern = "_(%d+)%.mp4$", format = "_%d.mp4"},
+    {pattern = "/(%d+)%.mp4:hls:manifest%.m3u8", format = "/%d.mp4:hls:manifest.m3u8"},
+}
+
 -- called from on_load: open the chosen quality and fill the menu; false if the file has no variants
 local function setup_file_variants()
     local url = mp.get_property("stream-open-filename") or ""
-    local playing = tonumber(url:match("_(%d+)%.mp4$"))
+    local playing, place
+    for _, p in ipairs(FILE_QUALITY) do
+        playing = tonumber(url:match(p.pattern))
+        if playing then place = p break end
+    end
     local variants = file_variants()
     if not playing or #variants < 2 then return false end
     -- the chosen quality or the nearest lower one; the lowest if all are higher
@@ -288,7 +298,7 @@ local function setup_file_variants()
         end
     end
     if want ~= playing then
-        mp.set_property("stream-open-filename", (url:gsub("_%d+%.mp4$", "_" .. want .. ".mp4")))
+        mp.set_property("stream-open-filename", (url:gsub(place.pattern, function () return place.format:format(want) end, 1)))
     end
     local list = {{id = "auto", title = T.auto, hint = variants[1] .. "p"}}
     for _, q in ipairs(variants) do list[#list + 1] = {id = tostring(q), title = q .. "p"} end
