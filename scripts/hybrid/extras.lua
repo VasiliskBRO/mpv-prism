@@ -19,7 +19,7 @@ local SKIP_WORDS = "opening, op, intro, ending, ed, outro, credits, preview, nex
                    "опенинг, интро, заставка, эндинг, титры, превью"
 
 local DEFAULTS = {
-    clips = true, clip_exact = false, clip_dir = "", clip_last = "30с, 1м, 2м, 5м, 10м",
+    clips = true, clip_exact = false, clip_dir = "", clip_last = "30с, 1м, 2м, 5м, 10м", clip_cookies = "firefox",
     shot = true,
     undo = true,
     skip = "ask", skip_words = SKIP_WORDS,
@@ -534,20 +534,35 @@ local function clip_save(a, b)
         local probe = free_name(dir, base, ".mp4")
         local stem = probe:sub(1, -5)
         local cleanup = leftovers(stem)
-        local args = {"yt-dlp", "--quiet", "--no-warnings", "--no-playlist", "--encoding", "utf-8",
-                      "-f", mp.get_property("ytdl-format", "") ~= "" and mp.get_property("ytdl-format") or "bv*+ba/b",
-                      "--download-sections", string.format("*%.2f-%.2f", a, b),
-                      "-o", stem .. ".%(ext)s", "--print", "after_move:filepath"}
-        -- exact: cut on the very frames (re-encoded by yt-dlp's ffmpeg, slower)
-        if M.get().clip_exact then args[#args + 1] = "--force-keyframes-at-cuts" end
-        args[#args + 1] = path
-        run(args, function (ok, err, stdout)
-            local out = stdout:match("([^\r\n]+)[\r\n]*$")
-            if ok and out and utils.file_info(out) then return clip_done(true, out) end
-            msg.warn("clip: yt-dlp failed (" .. tostring(err) .. "), trying the cache")
-            cleanup()
-            from_cache(err)
-        end)
+        local function download(browser)
+            local args = {"yt-dlp", "--quiet", "--no-warnings", "--no-playlist", "--encoding", "utf-8",
+                          "-f", mp.get_property("ytdl-format", "") ~= "" and mp.get_property("ytdl-format") or "bv*+ba/b",
+                          "--download-sections", string.format("*%.2f-%.2f", a, b),
+                          "-o", stem .. ".%(ext)s", "--print", "after_move:filepath"}
+            -- exact: cut on the very frames (re-encoded by yt-dlp's ffmpeg, slower)
+            if M.get().clip_exact then args[#args + 1] = "--force-keyframes-at-cuts" end
+            if browser then
+                args[#args + 1] = "--cookies-from-browser"
+                args[#args + 1] = browser
+            end
+            args[#args + 1] = path
+            run(args, function (ok, err, stdout)
+                local out = stdout:match("([^\r\n]+)[\r\n]*$")
+                if ok and out and utils.file_info(out) then return clip_done(true, out) end
+                cleanup()
+                -- YouTube's "Sign in to confirm you're not a bot": once more as the signed-in browser user.
+                -- Only then and only for YouTube: the cookies are not read for anything else.
+                local cookies = M.get().clip_cookies
+                local youtube = path:find("^https?://[%w.-]*youtube%.com/") or path:find("^https?://youtu%.be/")
+                if not browser and cookies ~= "" and youtube and err and err:find("Sign in to confirm", 1, true) then
+                    msg.info("clip: YouTube asks to sign in, retrying with the cookies of " .. cookies)
+                    return download(cookies)
+                end
+                msg.warn("clip: yt-dlp failed (" .. tostring(err) .. "), trying the cache")
+                from_cache(err)
+            end)
+        end
+        download()
         return
     end
 
@@ -893,6 +908,17 @@ function M.menu()
              action = function () M.set("clip_exact", not M.get().clip_exact) return "keep" end})
         add({title = "Длины для «последних» (Alt+C)", icon = "timer", hint = ucut(s.clip_last, 24),
              action = function () mp.add_timeout(0.05, M.ask_last) end})
+        add({title = "Браузер со входом в YouTube", icon = "login", hint = s.clip_cookies ~= "" and s.clip_cookies or "выкл",
+             action = function ()
+                 mp.add_timeout(0.05, function ()
+                     ask("Браузер для клипов, если YouTube просит войти (firefox, chrome, edge; пусто — выкл):",
+                         M.get().clip_cookies, function (text)
+                             text = text:gsub("%s+", ""):lower()
+                             M.set("clip_cookies", text)
+                             show(text ~= "" and ("Клипы YouTube: вход через " .. text) or "Клипы YouTube: без входа", 3, nil, "login")
+                         end)
+                 end)
+             end})
         -- the end of the path says more than its start (C:\Users\...)
         local tail = clip_dir():match("([^\\]+\\[^\\]+)$") or clip_dir()
         add({title = "Папка для клипов", icon = "folder", hint = "…\\" .. ucut(tail, 26), action = function ()
